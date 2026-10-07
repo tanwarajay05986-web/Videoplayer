@@ -22,6 +22,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -291,22 +292,45 @@ class MainActivity : ComponentActivity() {
         return c
     }
 
+    private fun createChip(onClick: () -> Unit): View {
+        val c = LinearLayout(this)
+        c.orientation = LinearLayout.HORIZONTAL
+        c.gravity = Gravity.CENTER_VERTICAL
+        c.setPadding(dp(14), dp(8), dp(16), dp(8))
+        val g = GradientDrawable()
+        g.cornerRadius = dp(24).toFloat()
+        g.setColor(Color.TRANSPARENT)
+        g.setStroke(dp(1), Color.parseColor("#7B5FD8"), dp(4).toFloat(), dp(3).toFloat())
+        c.background = g
+        val plus = GlyphView(this, G.CLOSE, Color.parseColor("#C9B8FF"))
+        plus.rotation = 45f
+        c.addView(plus, lp(dp(22), dp(22)))
+        val t = TextView(this)
+        t.text = "Create folder"
+        t.textSize = 14f
+        t.setTextColor(Color.parseColor("#C9B8FF"))
+        t.setPadding(dp(8), 0, 0, 0)
+        c.addView(t, lp(WRAP, WRAP))
+        c.setOnClickListener { onClick() }
+        return c
+    }
+
     private fun folderCard(
         name: String, sub: String, audio: Boolean, most: Boolean, fav: Boolean?,
-        onStar: (() -> Unit)?, onClick: () -> Unit, onLong: (() -> Unit)?
+        onStar: (() -> Unit)?, onClick: () -> Unit, onMore: (() -> Unit)?
     ): View {
         val st = Library.style(name, audio)
         val card = LinearLayout(this)
         card.orientation = LinearLayout.HORIZONTAL
         card.gravity = Gravity.CENTER_VERTICAL
-        card.setPadding(dp(12), dp(11), dp(8), dp(11))
+        card.setPadding(dp(12), dp(11), dp(6), dp(11))
         val bg = GradientDrawable()
         bg.setColor(Color.parseColor("#231C3D"))
         bg.cornerRadius = dp(20).toFloat()
         bg.setStroke(dp(1), Color.parseColor("#32295A"))
         card.background = bg
         val lpc = lp(MATCH, WRAP)
-        lpc.topMargin = dp(9)
+        lpc.topMargin = dp(10)
         card.layoutParams = lpc
 
         val tile = FrameLayout(this)
@@ -355,13 +379,16 @@ class MainActivity : ComponentActivity() {
                 if (fav) G.STAR_FILL else G.STAR,
                 if (fav) Color.parseColor("#FFC107") else DIM, null, 26
             ) { onStar?.invoke() }
-            card.addView(star, lp(dp(40), dp(40)))
+            card.addView(star, lp(dp(36), dp(40)))
         }
-        card.addView(GlyphView(this, G.CHEVRON, DIM), lp(dp(22), dp(22)))
+        if (onMore != null) {
+            card.addView(iconBtn(G.MORE_V, DIM, null, 22) { onMore() }, lp(dp(34), dp(40)))
+        }
+        card.addView(GlyphView(this, G.CHEVRON, DIM), lp(dp(20), dp(20)))
         card.setOnClickListener { onClick() }
-        if (onLong != null) {
+        if (onMore != null) {
             card.setOnLongClickListener {
-                onLong()
+                onMore()
                 true
             }
         }
@@ -453,9 +480,12 @@ class MainActivity : ComponentActivity() {
             list.addView(e, lp(MATCH, WRAP))
         } else {
             list.addView(readyBanner(visibleFiles.size))
+
+            val chipsScroll = HorizontalScrollView(this)
+            chipsScroll.isHorizontalScrollBarEnabled = false
             val chips = LinearLayout(this)
             chips.orientation = LinearLayout.HORIZONTAL
-            chips.setPadding(0, dp(12), 0, dp(2))
+            chips.setPadding(0, dp(12), 0, dp(4))
             chips.addView(chip("All folders", G.GRID, folderFilter == 0) {
                 folderFilter = 0
                 showTabs()
@@ -466,19 +496,30 @@ class MainActivity : ComponentActivity() {
                 folderFilter = 1
                 showTabs()
             }, cl)
-            list.addView(chips, lp(MATCH, WRAP))
+            val cl2 = lp(WRAP, WRAP)
+            cl2.leftMargin = dp(10)
+            chips.addView(createChip {
+                nameDialog("Create folder", "") { n ->
+                    if (createFolder(n, audio) != null) {
+                        toast("Folder created")
+                        showTabs()
+                    }
+                }
+            }, cl2)
+            chipsScroll.addView(chips)
+            list.addView(chipsScroll, lp(MATCH, WRAP))
 
             if (audio && folderFilter == 0 && visibleFiles.isNotEmpty()) {
                 val lim = System.currentTimeMillis() - 7L * 86400000L
                 val rc = visibleFiles.count { it.modified >= lim }
                 list.addView(
                     folderCard("Recently Added", if (rc > 0) "$rc tracks added" else "No new tracks", true, false, null, null,
-                        { openFolder("recent", "", true, "Recently Added") }, null), lp(MATCH, WRAP)
+                        { openFolder("recent", "", true, "Recently Added") }, null)
                 )
                 list.addView(
                     folderCard("All Audio", "${visibleFiles.size} tracks", true, false, null, null,
                         { openFolder("allaudio", "", true, "All Audio") },
-                        { folderSheet("All Audio", visibleFiles, false, "", true) }), lp(MATCH, WRAP)
+                        { folderSheet("All Audio", visibleFiles, false, "", true) })
                 )
             }
             for (f in shown) {
@@ -491,7 +532,7 @@ class MainActivity : ComponentActivity() {
                             showTabs()
                         },
                         { openFolder("path", f.path, audio, f.name) },
-                        { folderSheet(f.name, f.files, true, f.path, audio) }), lp(MATCH, WRAP)
+                        { folderSheet(f.name, f.files, true, f.path, audio) })
                 )
             }
             if (shown.isEmpty()) {
@@ -804,6 +845,7 @@ class MainActivity : ComponentActivity() {
                 showTabs()
             })
             items.add(SheetItem(G.PENCIL, "Rename") { renameFolder(path, title) })
+            items.add(SheetItem(G.FOLDER, "Move to folder") { moveTo(files, audio, path) })
             items.add(SheetItem(G.TRASH, "Delete") { deleteFiles(files, path, "this folder (" + files.size + " files)") })
         }
         items.add(SheetItem(G.SHARE, "Share") { shareFiles(files) })
@@ -819,6 +861,7 @@ class MainActivity : ComponentActivity() {
                 refreshScreen()
             },
             SheetItem(G.PENCIL, "Rename") { renameFile(f) },
+            SheetItem(G.FOLDER, "Move to folder") { moveTo(listOf(f), f.isAudio, f.folderPath) },
             SheetItem(G.TRASH, "Delete") { deleteFiles(listOf(f), null, "\"" + f.file.name + "\"") },
             SheetItem(G.SHARE, "Share") { shareFiles(listOf(f)) }
         ))
@@ -840,6 +883,88 @@ class MainActivity : ComponentActivity() {
             }.setNegativeButton("Cancel", null).create()
         dlg.show()
         dlg.tintButtons(GREEN)
+    }
+
+    // creates a folder in the main storage and remembers it so it shows up even when empty
+    private fun createFolder(name: String, audio: Boolean): File? {
+        val d = File(Environment.getExternalStorageDirectory(), name)
+        return try {
+            if (!d.exists() && !d.mkdirs()) {
+                toast("Could not create folder")
+                null
+            } else {
+                Prefs.addCustom(audio, d.absolutePath)
+                d
+            }
+        } catch (e: Throwable) {
+            toast("Could not create folder")
+            null
+        }
+    }
+
+    private fun moveTo(files: List<MediaFile>, audio: Boolean, srcPath: String?) {
+        if (files.isEmpty()) {
+            toast("Nothing to move")
+            return
+        }
+        val dests = Library.folders(all, audio, Prefs.hidden()).filter { it.path != srcPath }
+        val names = ArrayList<String>()
+        val acts = ArrayList<() -> Unit>()
+        names.add("+   Create new folder")
+        acts.add {
+            nameDialog("New folder", "") { n ->
+                val d = createFolder(n, audio)
+                if (d != null) doMove(files, d)
+            }
+        }
+        for (d in dests) {
+            names.add(d.name)
+            acts.add { doMove(files, File(d.path)) }
+        }
+        AlertDialog.Builder(this).setTitle("Move to folder")
+            .setItems(names.toTypedArray()) { _, w -> acts[w]() }
+            .show()
+    }
+
+    private fun doMove(files: List<MediaFile>, dest: File) {
+        toast("Moving...")
+        Thread {
+            var ok = 0
+            val scan = ArrayList<String>()
+            for (f in files) {
+                try {
+                    dest.mkdirs()
+                    var target = File(dest, f.file.name)
+                    var i = 1
+                    while (target.exists()) {
+                        target = File(dest, f.file.nameWithoutExtension + "_" + i + "." + f.file.extension)
+                        i++
+                    }
+                    if (f.file.renameTo(target)) {
+                        ok++
+                        scan.add(f.path)
+                        scan.add(target.absolutePath)
+                    } else {
+                        f.file.copyTo(target, false)
+                        if (target.length() == f.file.length()) {
+                            f.file.delete()
+                            ok++
+                            scan.add(f.path)
+                            scan.add(target.absolutePath)
+                        } else {
+                            target.delete()
+                        }
+                    }
+                } catch (e: Throwable) {
+                }
+            }
+            runOnUiThread {
+                if (scan.isNotEmpty()) MediaScannerConnection.scanFile(this, scan.toTypedArray(), null, null)
+                toast(if (ok == files.size) "Moved $ok file(s)" else "Moved $ok of ${files.size}")
+                LibraryState.dirty = true
+                reload()
+            }
+        }.start()
     }
 
     private fun renameFile(f: MediaFile) {
@@ -865,6 +990,7 @@ class MainActivity : ComponentActivity() {
             if (dst.exists()) {
                 toast("A folder with this name already exists")
             } else if (src.renameTo(dst)) {
+                Prefs.renameCustom(path, dst.absolutePath)
                 toast("Renamed")
                 screen = "tabs"
                 LibraryState.dirty = true
@@ -893,7 +1019,10 @@ class MainActivity : ComponentActivity() {
                 }
                 if (folderPath != null) {
                     val d = File(folderPath)
-                    if (d.isDirectory && d.list()?.isEmpty() == true) d.delete()
+                    if (d.isDirectory && d.list()?.isEmpty() == true) {
+                        d.delete()
+                        Prefs.removeCustom(folderPath)
+                    }
                     screen = "tabs"
                 }
                 if (paths.isNotEmpty()) MediaScannerConnection.scanFile(this, paths.toTypedArray(), null, null)
