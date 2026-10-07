@@ -84,6 +84,36 @@ object Prefs {
         return now
     }
 
+    // folders created from the app (shown even when empty). entries look like "v|/path" or "a|/path"
+    fun customFolders(audio: Boolean): Set<String> {
+        val pre = if (audio) "a|" else "v|"
+        val out = HashSet<String>()
+        for (e in getSet("mkf")) {
+            if (e.startsWith(pre) && e.length > 2) out.add(e.substring(2))
+        }
+        return out
+    }
+
+    fun addCustom(audio: Boolean, path: String) {
+        val s = getSet("mkf")
+        s.add((if (audio) "a|" else "v|") + path)
+        putSet("mkf", s)
+    }
+
+    fun removeCustom(path: String) {
+        val s = getSet("mkf")
+        s.removeAll { it.length > 2 && it.substring(2) == path }
+        putSet("mkf", s)
+    }
+
+    fun renameCustom(oldPath: String, newPath: String) {
+        val out = HashSet<String>()
+        for (e in getSet("mkf")) {
+            if (e.length > 2 && e.substring(2) == oldPath) out.add(e.substring(0, 2) + newPath) else out.add(e)
+        }
+        putSet("mkf", out)
+    }
+
     fun isFavorite(path: String): Boolean = getSet("fav").contains(path)
 
     fun toggleFavorite(path: String): Boolean {
@@ -166,7 +196,7 @@ object Library {
 
     // folders that are never shown (compared without spaces/underscores/dashes)
     private val EXCLUDED = setOf(
-        "launchdesk", "modify", "sent", "server", "test", "tolls", "tools", "utils"
+        "launchdesk", "sent", "server", "test", "tests", "tolls", "tools", "utils"
     )
 
     private val PALETTE = listOf(
@@ -177,7 +207,7 @@ object Library {
 
     fun excluded(name: String): Boolean {
         val k = name.lowercase(Locale.ROOT).replace(" ", "").replace("_", "").replace("-", "")
-        return EXCLUDED.contains(k)
+        return EXCLUDED.contains(k) || k.contains("modify") || k.contains("replicate")
     }
 
     fun roots(ctx: Context): List<File> {
@@ -246,6 +276,12 @@ object Library {
         val map = LinkedHashMap<String, MutableList<MediaFile>>()
         for (f in visible(all, audio, hidden)) {
             map.getOrPut(f.folderPath) { ArrayList() }.add(f)
+        }
+        for (cp in Prefs.customFolders(audio)) {
+            if (map.containsKey(cp) || hidden.contains(cp)) continue
+            val d = File(cp)
+            if (!d.isDirectory || excluded(d.name)) continue
+            map[cp] = ArrayList()
         }
         val res = ArrayList<FolderItem>()
         for ((k, v) in map) res.add(FolderItem(k, File(k).name, v))
