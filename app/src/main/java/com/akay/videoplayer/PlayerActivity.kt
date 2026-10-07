@@ -3,18 +3,23 @@ package com.akay.videoplayer
 import android.app.AlertDialog
 import android.app.PictureInPictureParams
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
+import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Bundle
@@ -26,6 +31,7 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Rational
 import android.view.Gravity
+import android.view.OrientationEventListener
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
@@ -61,6 +67,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.SubtitleView
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -68,9 +75,68 @@ object LibraryState {
     var dirty = false
 }
 
+// vertical strip shown while changing brightness / volume
+class StripHud(ctx: Context, glyph: Int, fillColor: Int) : FrameLayout(ctx) {
+    private var level = 0f
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    init {
+        setWillNotDraw(false)
+        bg.color = Color.parseColor("#E61E1E1E")
+        track.color = Color.parseColor("#4A4A4A")
+        fill.color = fillColor
+        val l = LayoutParams(ctx.dp(28), ctx.dp(28), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        l.bottomMargin = ctx.dp(12)
+        addView(GlyphView(ctx, glyph, Color.WHITE), l)
+        visibility = GONE
+    }
+
+    fun setLevel(v: Float) {
+        level = v.coerceIn(0f, 1f)
+        invalidate()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        c.drawRoundRect(RectF(0f, 0f, w, h), w * 0.12f, w * 0.12f, bg)
+        val tw = w * 0.16f
+        val left = (w - tw) / 2f
+        val top = h * 0.07f
+        val bottom = h * 0.70f
+        c.drawRoundRect(RectF(left, top, left + tw, bottom), tw / 2f, tw / 2f, track)
+        if (level > 0.001f) {
+            val ft = bottom - (bottom - top) * level
+            c.drawRoundRect(RectF(left, ft, left + tw, bottom), tw / 2f, tw / 2f, fill)
+        }
+    }
+}
+
+// small triangle under the seek preview box
+class ArrowView(ctx: Context) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    init {
+        p.color = Color.parseColor("#EB2B2B2B")
+    }
+
+    override fun onDraw(c: Canvas) {
+        val path = Path()
+        path.moveTo(0f, 0f)
+        path.lineTo(width.toFloat(), 0f)
+        path.lineTo(width / 2f, height.toFloat())
+        path.close()
+        c.drawPath(path, p)
+    }
+}
+
 class PlayerActivity : ComponentActivity() {
 
     private val GREEN = Color.parseColor("#14B800")
+    private val RED = Color.parseColor("#E53935")
+    private val DARK_YELLOW = Color.parseColor("#C99700")
     private val RINGBG = Color.parseColor("#802A2A2A")
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -86,6 +152,8 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var artTitle: TextView
     private lateinit var gest: GestureLayer
     private lateinit var hud: TextView
+    private lateinit var brightHud: StripHud
+    private lateinit var volHud: StripHud
     private lateinit var controls: FrameLayout
     private lateinit var titleTv: TextView
     private lateinit var seek: SeekBar
@@ -113,6 +181,10 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var swChip: TextView
     private lateinit var shotDot: View
     private lateinit var repeatName: TextView
+    private lateinit var pvCard: LinearLayout
+    private lateinit var pvImg: ImageView
+    private lateinit var pvText: TextView
+    private lateinit var pvArrow: View
 
     private val cellIcons = HashMap<String, GlyphView>()
     private val repeatBtns = ArrayList<FrameLayout>()
@@ -122,16 +194,29 @@ class PlayerActivity : ComponentActivity() {
     private var rotLocked = false
     private var seeking = false
     private var showShot = false
-    private var enhance = false
-    private var orientSet = false
     private var cfBright = 0
     private var cfContrast = 100
     private var cfSat = 100
     private var cfWarm = 0
     private var zoom = 1f
-    private var volFrac = -1f
+    private var volLevelF = -1f
     private var holdPrev = 1f
     private var holdingFast = false
+    private var seekStartPos = 0L
+
+    // manual rotate: stay in the chosen orientation until the phone is physically turned
+    private var orientListener: OrientationEventListener? = null
+    private var waitingPhys = false
+    private var wantLand = false
+
+    // seek preview
+    private val previewExec = Executors.newSingleThreadExecutor()
+    private val prevLock = Any()
+    private var previewBusy = false
+    private var previewWant = -1L
+    private var previewPath = ""
+    private var retriever: MediaMetadataRetriever? = null
+    private var retrieverPath = ""
 
     private val resizeModes = intArrayOf(
         AspectRatioFrameLayout.RESIZE_MODE_FIT,
@@ -147,7 +232,11 @@ class PlayerActivity : ComponentActivity() {
         if (uri != null) addSubtitle(uri)
     }
 
-    private val hudHide = Runnable { hud.visibility = View.GONE }
+    private val hudHide = Runnable {
+        hud.visibility = View.GONE
+        brightHud.visibility = View.GONE
+        volHud.visibility = View.GONE
+    }
 
     // ---------- small helpers ----------
 
@@ -156,6 +245,13 @@ class PlayerActivity : ComponentActivity() {
     private fun lpm(w: Int, h: Int, left: Int): LinearLayout.LayoutParams {
         val l = lp(w, h)
         l.leftMargin = left
+        return l
+    }
+
+    private fun lpg(w: Int, h: Int, gap: Int): LinearLayout.LayoutParams {
+        val l = lp(w, h)
+        l.leftMargin = gap / 2
+        l.rightMargin = gap / 2
         return l
     }
 
@@ -271,18 +367,30 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
+        try {
+            orientListener?.disable()
+        } catch (e: Throwable) {
+        }
         p?.removeListener(listener)
         try {
             p?.clearVideoTextureView(tex)
         } catch (e: Throwable) {
         }
+        previewExec.execute {
+            try {
+                retriever?.release()
+            } catch (e: Throwable) {
+            }
+            retriever = null
+        }
+        previewExec.shutdown()
         if (isFinishing && !PlayerManager.backgroundMode) PlayerManager.release()
         super.onDestroy()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        updatePanelWidth()
+        layoutPanel()
         applyOrientationUi()
         hideBars()
     }
@@ -310,6 +418,11 @@ class PlayerActivity : ComponentActivity() {
         btnBack10.visibility = v
         btnFwd10.visibility = v
         speedWord.visibility = v
+    }
+
+    private fun restoreOrientation() {
+        requestedOrientation = if (rotLocked) ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        else ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
     }
 
     // ---------- player wiring ----------
@@ -341,11 +454,6 @@ class PlayerActivity : ComponentActivity() {
                 var r = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
                 if (videoSize.unappliedRotationDegrees == 90 || videoSize.unappliedRotationDegrees == 270) r = 1f / r
                 arFrame.setAspectRatio(r)
-                if (!orientSet && !rotLocked) {
-                    orientSet = true
-                    requestedOrientation = if (r >= 1f) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    else ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-                }
             }
         }
 
@@ -452,9 +560,12 @@ class PlayerActivity : ComponentActivity() {
         if (controls.visibility == View.VISIBLE) controls.visibility = View.GONE else showControls()
     }
 
+    // screen lock: stops clicks AND rotation
     private fun lockScreen() {
         locked = true
         gest.enabledAll = false
+        waitingPhys = false
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LOCKED
         controls.visibility = View.GONE
         showUnlock()
         toast("Screen locked")
@@ -463,13 +574,20 @@ class PlayerActivity : ComponentActivity() {
     private fun unlock() {
         locked = false
         gest.enabledAll = true
+        restoreOrientation()
         unlockBtn.visibility = View.GONE
         toast("Unlocked")
     }
 
     // ---------- gestures ----------
 
-    private fun showHud(text: String, ms: Long) {
+    private fun showHud(text: String, ms: Long, strip: StripHud? = null, level: Float = 0f) {
+        brightHud.visibility = View.GONE
+        volHud.visibility = View.GONE
+        if (strip != null) {
+            strip.setLevel(level)
+            strip.visibility = View.VISIBLE
+        }
         hud.text = text
         hud.visibility = View.VISIBLE
         main.removeCallbacks(hudHide)
@@ -489,7 +607,7 @@ class PlayerActivity : ComponentActivity() {
         gest.cbHold = { on -> holdFast(on) }
         gest.cbZoom = { f -> zoomBy(f) }
         gest.cbZoomEnd = { zoomEnd() }
-        gest.cbSwipeEnd = { volFrac = -1f }
+        gest.cbSwipeEnd = { volLevelF = -1f }
     }
 
     private fun systemBright(): Float = try {
@@ -504,16 +622,30 @@ class PlayerActivity : ComponentActivity() {
         val v = (base + d).coerceIn(0.01f, 1f)
         a.screenBrightness = v
         window.attributes = a
-        showHud("Brightness " + (v * 100).roundToInt(), 700)
+        showHud("Brightness :   " + (v * 100).roundToInt() + "%", 900, brightHud, v)
+    }
+
+    // volume level 0..200 (above 100 = boost)
+    private fun currentVolLevel(): Int {
+        val am = getSystemService(AudioManager::class.java)
+        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val cv = am.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / maxOf(1, max)
+        return if (PlayerManager.boostGain > 0) 100 + PlayerManager.boostGain / 12 else cv
+    }
+
+    private fun applyVolumeLevel(v: Int) {
+        val am = getSystemService(AudioManager::class.java)
+        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(minOf(v, 100) / 100f * max), 0)
+        PlayerManager.setBoost(if (v > 100) (v - 100) * 12 else 0)
     }
 
     private fun adjustVolume(d: Float) {
-        val am = getSystemService(AudioManager::class.java)
-        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        if (volFrac < 0f) volFrac = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxOf(1, max)
-        volFrac = (volFrac + d).coerceIn(0f, 1f)
-        am.setStreamVolume(AudioManager.STREAM_MUSIC, (volFrac * max).roundToInt(), 0)
-        showHud("Volume " + (volFrac * 100).roundToInt(), 700)
+        if (volLevelF < 0f) volLevelF = currentVolLevel().toFloat()
+        volLevelF = (volLevelF + d * 200f).coerceIn(0f, 200f)
+        val lvl = volLevelF.roundToInt()
+        applyVolumeLevel(lvl)
+        showHud("Volume :  $lvl", 900, volHud, lvl / 200f)
     }
 
     private fun holdFast(on: Boolean) {
@@ -528,7 +660,7 @@ class PlayerActivity : ComponentActivity() {
             pl.setPlaybackSpeed(holdPrev)
             holdingFast = false
             main.removeCallbacks(hudHide)
-            hud.visibility = View.GONE
+            hudHide.run()
         }
     }
 
@@ -604,13 +736,21 @@ class PlayerActivity : ComponentActivity() {
         al.topMargin = dp(8)
         root.addView(abLabel, al)
 
+        brightHud = StripHud(this, G.SUN, RED)
+        val bl = FrameLayout.LayoutParams(dp(44), dp(176), Gravity.END or Gravity.CENTER_VERTICAL)
+        bl.rightMargin = dp(16)
+        root.addView(brightHud, bl)
+        volHud = StripHud(this, G.VOLUME, DARK_YELLOW)
+        val vl = FrameLayout.LayoutParams(dp(44), dp(176), Gravity.START or Gravity.CENTER_VERTICAL)
+        vl.leftMargin = dp(16)
+        root.addView(volHud, vl)
+
         hud = TextView(this)
-        hud.textSize = 26f
-        hud.setTypeface(null, Typeface.BOLD)
+        hud.textSize = 22f
         hud.setTextColor(Color.WHITE)
         hud.gravity = Gravity.CENTER
-        hud.setPadding(dp(24), dp(12), dp(24), dp(12))
-        hud.background = rr(Color.parseColor("#AA000000"), 26)
+        hud.setPadding(dp(18), dp(12), dp(18), dp(12))
+        hud.background = rr(Color.parseColor("#E62B2B2B"), 8)
         hud.visibility = View.GONE
         root.addView(hud, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
 
@@ -709,16 +849,24 @@ class PlayerActivity : ComponentActivity() {
         styleSeek(seek)
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
-                if (fromUser) curT.text = Fmt.dur(progress.toLong())
+                if (fromUser) {
+                    curT.text = Fmt.dur(progress.toLong())
+                    updatePreview(progress.toLong())
+                }
             }
 
             override fun onStartTrackingTouch(sb: SeekBar) {
                 seeking = true
+                seekStartPos = p?.currentPosition ?: 0L
                 main.removeCallbacks(hideRun)
+                updatePreview(sb.progress.toLong())
             }
 
             override fun onStopTrackingTouch(sb: SeekBar) {
                 seeking = false
+                pvCard.visibility = View.GONE
+                pvArrow.visibility = View.GONE
+                synchronized(prevLock) { previewWant = -1L }
                 p?.seekTo(sb.progress.toLong())
                 showControls()
             }
@@ -732,17 +880,25 @@ class PlayerActivity : ComponentActivity() {
         sr.addView(durT, lp(WRAP, WRAP))
         bottom.addView(sr, lp(MATCH, WRAP))
 
+        // bottom row = left | centered play cluster | right
         val br = LinearLayout(this)
         br.orientation = LinearLayout.HORIZONTAL
         br.gravity = Gravity.CENTER_VERTICAL
         br.setPadding(0, dp(8), 0, 0)
+
+        val leftG = LinearLayout(this)
+        leftG.gravity = Gravity.START or Gravity.CENTER_VERTICAL
         val lockB = GlyphView(this, G.UNLOCK)
         lockB.setOnClickListener { lockScreen() }
-        br.addView(lockB, lp(dp(46), dp(46)))
-        br.addView(View(this), lp(0, 1, 1f))
+        leftG.addView(lockB, lp(dp(46), dp(46)))
+
+        val gap = dp(30)
+        val centerG = LinearLayout(this)
+        centerG.orientation = LinearLayout.HORIZONTAL
+        centerG.gravity = Gravity.CENTER_VERTICAL
         btnBack10 = plain(G.REPLAY) { seekBy(-10000L) }
-        br.addView(btnBack10, lp(dp(50), dp(50)))
-        br.addView(plain(G.PREV) { prevItem() }, lpm(dp(46), dp(46), dp(10)))
+        centerG.addView(btnBack10, lpg(dp(50), dp(50), gap))
+        centerG.addView(plain(G.PREV) { prevItem() }, lpg(dp(46), dp(46), gap))
         val playRing = FrameLayout(this)
         val pb = GradientDrawable()
         pb.shape = GradientDrawable.OVAL
@@ -755,11 +911,13 @@ class PlayerActivity : ComponentActivity() {
             togglePlay()
             showControls()
         }
-        br.addView(playRing, lpm(dp(66), dp(66), dp(10)))
-        br.addView(plain(G.NEXT) { nextItem() }, lpm(dp(46), dp(46), dp(10)))
+        centerG.addView(playRing, lpg(dp(66), dp(66), gap))
+        centerG.addView(plain(G.NEXT) { nextItem() }, lpg(dp(46), dp(46), gap))
         btnFwd10 = plain(G.FORWARD) { seekBy(10000L) }
-        br.addView(btnFwd10, lpm(dp(50), dp(50), dp(10)))
-        br.addView(View(this), lp(0, 1, 1f))
+        centerG.addView(btnFwd10, lpg(dp(50), dp(50), gap))
+
+        val rightG = LinearLayout(this)
+        rightG.gravity = Gravity.END or Gravity.CENTER_VERTICAL
         val speedTv = TextView(this)
         speedTv.text = "Speed"
         speedTv.textSize = 18f
@@ -770,10 +928,147 @@ class PlayerActivity : ComponentActivity() {
             showControls()
         }
         speedWord = speedTv
-        br.addView(speedTv, lp(WRAP, WRAP))
-        br.addView(plain(G.RESIZE) { cycleResize() }, lpm(dp(46), dp(46), dp(8)))
+        rightG.addView(speedTv, lp(WRAP, WRAP))
+        rightG.addView(plain(G.RESIZE) { cycleResize() }, lp(dp(46), dp(46)))
+
+        br.addView(leftG, lp(0, WRAP, 1f))
+        br.addView(centerG, lp(WRAP, WRAP))
+        br.addView(rightG, lp(0, WRAP, 1f))
         bottom.addView(br, lp(MATCH, WRAP))
         controls.addView(bottom, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM))
+
+        // seek preview (small frame above the seek bar)
+        pvCard = LinearLayout(this)
+        pvCard.orientation = LinearLayout.VERTICAL
+        pvCard.gravity = Gravity.CENTER_HORIZONTAL
+        pvCard.setPadding(dp(14), dp(12), dp(14), dp(12))
+        pvCard.background = rr(Color.parseColor("#EB2B2B2B"), 14)
+        pvCard.visibility = View.GONE
+        pvImg = ImageView(this)
+        pvImg.scaleType = ImageView.ScaleType.FIT_CENTER
+        pvImg.visibility = View.GONE
+        pvCard.addView(pvImg, lp(dp(60), dp(100)))
+        pvText = TextView(this)
+        pvText.textSize = 18f
+        pvText.setTextColor(Color.WHITE)
+        pvText.setPadding(0, dp(8), 0, 0)
+        pvCard.addView(pvText, lp(WRAP, WRAP))
+        controls.addView(pvCard, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.START))
+        pvArrow = ArrowView(this)
+        pvArrow.visibility = View.GONE
+        controls.addView(pvArrow, FrameLayout.LayoutParams(dp(20), dp(10), Gravity.TOP or Gravity.START))
+    }
+
+    // ---------- seek preview ----------
+
+    private fun updatePreview(pos: Long) {
+        val delta = pos - seekStartPos
+        pvText.text = Fmt.dur(pos) + " [" + (if (delta >= 0) "+" else "-") + Fmt.dur(abs(delta)) + "]"
+        pvCard.visibility = View.VISIBLE
+        pvArrow.visibility = View.VISIBLE
+        if (cur()?.isAudio == true) {
+            pvImg.visibility = View.GONE
+        } else {
+            requestPreview(pos)
+        }
+        pvCard.post { placePreview() }
+    }
+
+    private fun placePreview() {
+        if (pvCard.visibility != View.VISIBLE) return
+        val ctr = IntArray(2)
+        controls.getLocationOnScreen(ctr)
+        val sl = IntArray(2)
+        seek.getLocationOnScreen(sl)
+        val avail = seek.width - seek.paddingLeft - seek.paddingRight
+        val frac = if (seek.max > 0) seek.progress.toFloat() / seek.max else 0f
+        val thumbX = (sl[0] - ctr[0]) + seek.paddingLeft + avail * frac
+        pvCard.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val w = pvCard.measuredWidth
+        val h = pvCard.measuredHeight
+        var x = thumbX - w / 2f
+        val maxX = (controls.width - w - dp(8)).toFloat()
+        x = x.coerceIn(dp(8).toFloat(), maxOf(dp(8).toFloat(), maxX))
+        val seekTop = sl[1] - ctr[1]
+        val y = seekTop - h - dp(16)
+        pvCard.x = x
+        pvCard.y = y.toFloat()
+        pvArrow.x = thumbX - dp(10)
+        pvArrow.y = (y + h - dp(1)).toFloat()
+    }
+
+    private fun requestPreview(posMs: Long) {
+        val f = cur() ?: return
+        synchronized(prevLock) {
+            previewWant = posMs
+            previewPath = f.path
+            if (previewBusy) return
+            previewBusy = true
+        }
+        previewExec.execute {
+            while (true) {
+                var want = -1L
+                var path = ""
+                synchronized(prevLock) {
+                    want = previewWant
+                    path = previewPath
+                    previewWant = -1L
+                    if (want < 0) previewBusy = false
+                }
+                if (want < 0) return@execute
+                val bmp = frameAt(path, want)
+                runOnUiThread {
+                    if (bmp != null && pvCard.visibility == View.VISIBLE) showPreviewFrame(bmp)
+                }
+            }
+        }
+    }
+
+    private fun frameAt(path: String, posMs: Long): Bitmap? {
+        try {
+            var r = retriever
+            if (r == null || retrieverPath != path) {
+                try {
+                    r?.release()
+                } catch (e: Throwable) {
+                }
+                val nr = MediaMetadataRetriever()
+                nr.setDataSource(path)
+                retriever = nr
+                retrieverPath = path
+                r = nr
+            }
+            val ret = r ?: return null
+            val full = ret.getFrameAtTime(posMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return null
+            val sc = 260f / maxOf(full.width, full.height)
+            if (sc >= 1f) return full
+            val out = Bitmap.createScaledBitmap(
+                full, maxOf(2, (full.width * sc).toInt()), maxOf(2, (full.height * sc).toInt()), true
+            )
+            if (out !== full) full.recycle()
+            return out
+        } catch (e: Throwable) {
+            return null
+        }
+    }
+
+    private fun showPreviewFrame(bmp: Bitmap) {
+        val maxW = dp(170)
+        val maxH = dp(104)
+        val a = bmp.width.toFloat() / bmp.height
+        var w = maxW
+        var h = (maxW / a).toInt()
+        if (h > maxH) {
+            h = maxH
+            w = (maxH * a).toInt()
+        }
+        val l = pvImg.layoutParams
+        l.width = w
+        l.height = h
+        pvImg.layoutParams = l
+        pvImg.setImageBitmap(bmp)
+        pvImg.visibility = View.VISIBLE
+        pvCard.post { placePreview() }
     }
 
     // ---------- basic controls ----------
@@ -814,23 +1109,43 @@ class PlayerActivity : ComponentActivity() {
         muteGlyph.setShape(if (mute) G.MUTE else G.VOLUME)
     }
 
+    // top-bar button: lock / unlock automatic rotation
     private fun toggleRotLock() {
         rotLocked = !rotLocked
         rotGlyph.slashOn(rotLocked)
         rotGlyph.tint(if (rotLocked) GREEN else Color.WHITE)
-        requestedOrientation = if (rotLocked) ActivityInfo.SCREEN_ORIENTATION_LOCKED
-        else ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        waitingPhys = false
+        try {
+            orientListener?.disable()
+        } catch (e: Throwable) {
+        }
+        restoreOrientation()
         toast(if (rotLocked) "Auto-rotation locked" else "Auto-rotation on")
     }
 
+    // quick-row button: turn the screen by hand (works even when rotation is locked)
     private fun manualRotate() {
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        requestedOrientation = if (land) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        main.postDelayed({
-            requestedOrientation = if (rotLocked) ActivityInfo.SCREEN_ORIENTATION_LOCKED
-            else ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-        }, 1500)
+        wantLand = !land
+        requestedOrientation = if (wantLand) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (rotLocked) return
+        waitingPhys = true
+        if (orientListener == null) {
+            orientListener = object : OrientationEventListener(this) {
+                override fun onOrientationChanged(o: Int) {
+                    if (!waitingPhys || o == ORIENTATION_UNKNOWN) return
+                    val physLand = (o in 60..120) || (o in 240..300)
+                    val physPort = (o <= 30) || (o >= 330) || (o in 150..210)
+                    if ((wantLand && physLand) || (!wantLand && physPort)) {
+                        waitingPhys = false
+                        if (!rotLocked && !locked) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                        disable()
+                    }
+                }
+            }
+        }
+        orientListener?.enable()
     }
 
     private fun cycleResize() {
@@ -966,13 +1281,12 @@ class PlayerActivity : ComponentActivity() {
 
     private fun buildPanel() {
         panelWrap = FrameLayout(this)
-        panelWrap.setBackgroundColor(Color.parseColor("#55000000"))
+        panelWrap.setBackgroundColor(Color.TRANSPARENT)
         panelWrap.visibility = View.GONE
         panelWrap.setOnClickListener { hidePanel() }
 
         panelBox = LinearLayout(this)
         panelBox.orientation = LinearLayout.VERTICAL
-        panelBox.setBackgroundColor(Color.parseColor("#F2000000"))
         panelBox.isClickable = true
 
         val col = LinearLayout(this)
@@ -996,8 +1310,7 @@ class PlayerActivity : ComponentActivity() {
         col.addView(gridRow(listOf(
             cell("ab", G.AB, "AB Repeat") { abRepeat() },
             cell("eq", G.EQ, "Equalizer") { eqDialog() },
-            cell("timer", G.ALARM, "Timer") { timerDialog() },
-            cell("enh", G.HD, "Visual Enhancer") { toggleEnhance() }
+            cell("timer", G.ALARM, "Timer") { timerDialog() }
         )), lp(MATCH, WRAP))
         col.addView(divider(), lp(MATCH, dp(1)))
 
@@ -1140,11 +1453,26 @@ class PlayerActivity : ComponentActivity() {
         return t
     }
 
-    private fun updatePanelWidth() {
+    // landscape: panel on the right side. portrait: bottom sheet.
+    private fun layoutPanel() {
         val dm = resources.displayMetrics
         val land = dm.widthPixels > dm.heightPixels
         val l = panelBox.layoutParams as FrameLayout.LayoutParams
-        l.width = if (land) minOf(dp(460), (dm.widthPixels * 0.62f).toInt()) else MATCH
+        if (land) {
+            l.width = minOf(dp(460), (dm.widthPixels * 0.62f).toInt())
+            l.height = MATCH
+            l.gravity = Gravity.END
+            panelBox.setBackgroundColor(Color.parseColor("#F2000000"))
+        } else {
+            l.width = MATCH
+            l.height = (dm.heightPixels * 0.56f).toInt()
+            l.gravity = Gravity.BOTTOM
+            val g = GradientDrawable()
+            g.setColor(Color.parseColor("#F0141414"))
+            val r = dp(28).toFloat()
+            g.cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            panelBox.background = g
+        }
         panelBox.layoutParams = l
     }
 
@@ -1175,17 +1503,13 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun setVolumeLevel(v: Int) {
-        val am = getSystemService(AudioManager::class.java)
-        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(minOf(v, 100) / 100f * max), 0)
-        PlayerManager.setBoost(if (v > 100) (v - 100) * 12 else 0)
+        applyVolumeLevel(v)
         volVal.text = v.toString()
     }
 
     private fun syncPanel() {
         val f = cur()
         cellIcons["fav"]?.tint(if (f != null && Prefs.isFavorite(f.path)) GREEN else Color.WHITE)
-        cellIcons["enh"]?.tint(if (enhance) GREEN else Color.WHITE)
         cellIcons["ab"]?.tint(if (PlayerManager.abA >= 0) GREEN else Color.WHITE)
         updateRepeatUi()
         styleChip(hwChip, !PlayerManager.softDecoder)
@@ -1195,17 +1519,14 @@ class PlayerActivity : ComponentActivity() {
         val bv = if (cb >= 0f) (cb * 100).toInt() else (systemBright() * 100).toInt()
         brightSeek.progress = bv
         brightVal.text = bv.toString()
-        val am = getSystemService(AudioManager::class.java)
-        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        val cv = am.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / maxOf(1, max)
-        val vv = if (PlayerManager.boostGain > 0) 100 + PlayerManager.boostGain / 12 else cv
+        val vv = currentVolLevel()
         volSeek.progress = vv
         volVal.text = vv.toString()
     }
 
     private fun showPanel() {
         syncPanel()
-        updatePanelWidth()
+        layoutPanel()
         panelWrap.visibility = View.VISIBLE
         controls.visibility = View.GONE
         main.removeCallbacks(hideRun)
@@ -1459,23 +1780,16 @@ class PlayerActivity : ComponentActivity() {
         }.show()
     }
 
-    private fun toggleEnhance() {
-        enhance = !enhance
-        applyFilter()
-        cellIcons["enh"]?.tint(if (enhance) GREEN else Color.WHITE)
-        toast(if (enhance) "Visual enhancer on" else "Visual enhancer off")
-    }
-
     private fun applyFilter() {
-        val plainView = cfBright == 0 && cfContrast == 100 && cfSat == 100 && cfWarm == 0 && !enhance
+        val plainView = cfBright == 0 && cfContrast == 100 && cfSat == 100 && cfWarm == 0
         if (plainView) {
             tex.setLayerType(View.LAYER_TYPE_NONE, null)
             return
         }
         val sat = ColorMatrix()
-        sat.setSaturation((cfSat + (if (enhance) 20 else 0)) / 100f)
-        val c = (cfContrast + (if (enhance) 12 else 0)) / 100f
-        val b = cfBright * 2.55f + (if (enhance) 6f else 0f)
+        sat.setSaturation(cfSat / 100f)
+        val c = cfContrast / 100f
+        val b = cfBright * 2.55f
         val t = (-0.5f * c + 0.5f) * 255f + b
         val con = ColorMatrix(floatArrayOf(c, 0f, 0f, 0f, t, 0f, c, 0f, 0f, t, 0f, 0f, c, 0f, t, 0f, 0f, 0f, 1f, 0f))
         val w = cfWarm * 0.8f
