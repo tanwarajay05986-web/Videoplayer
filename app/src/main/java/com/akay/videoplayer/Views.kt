@@ -12,15 +12,21 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
-import android.view.ViewGroup
+import android.view.ViewConfiguration
 import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -81,6 +87,12 @@ object G {
     const val DOTS_H = 68
     const val EYE_OFF = 69
     const val INFO = 70
+    const val STAR = 71
+    const val STAR_FILL = 72
+    const val GRID = 73
+    const val FOLDER_HEART = 74
+    const val DRIVE = 75
+    const val SPARKLE = 76
 }
 
 class GlyphView(context: Context, var kind: Int, private var color: Int = Color.WHITE) : View(context) {
@@ -458,6 +470,50 @@ class GlyphView(context: Context, var kind: Int, private var color: Int = Color.
                 circ(.5f, .35f, .03f, true)
                 line(.5f, .47f, .5f, .67f)
             }
+            G.STAR, G.STAR_FILL -> {
+                path.reset()
+                for (i in 0 until 10) {
+                    val r = if (i % 2 == 0) .36f else .16f
+                    val a = Math.toRadians(-90.0 + i * 36.0)
+                    val x = px(.5f + r * cos(a).toFloat())
+                    val y = py(.54f + r * sin(a).toFloat())
+                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                cv.drawPath(path, if (kind == G.STAR_FILL) f else p)
+            }
+            G.GRID -> {
+                rr(.2f, .2f, .45f, .45f, .06f)
+                rr(.55f, .2f, .8f, .45f, .06f)
+                rr(.2f, .55f, .45f, .8f, .06f)
+                rr(.55f, .55f, .8f, .8f, .06f)
+            }
+            G.FOLDER_HEART -> {
+                pg(false, .14f, .28f, .38f, .28f, .46f, .36f, .86f, .36f, .86f, .76f, .14f, .76f)
+                path.reset()
+                path.moveTo(px(.7f), py(.72f))
+                path.cubicTo(px(.6f), py(.64f), px(.64f), py(.55f), px(.7f), py(.6f))
+                path.cubicTo(px(.76f), py(.55f), px(.8f), py(.64f), px(.7f), py(.72f))
+                cv.drawPath(path, p)
+            }
+            G.DRIVE -> {
+                pl(.2f, .56f, .3f, .34f, .7f, .34f, .8f, .56f)
+                rr(.2f, .56f, .8f, .74f, .05f)
+                circ(.32f, .65f, .02f, true)
+                circ(.4f, .65f, .02f, true)
+            }
+            G.SPARKLE -> {
+                path.reset()
+                path.moveTo(px(.44f), py(.2f))
+                path.quadTo(px(.44f), py(.5f), px(.72f), py(.5f))
+                path.quadTo(px(.44f), py(.5f), px(.44f), py(.8f))
+                path.quadTo(px(.44f), py(.5f), px(.16f), py(.5f))
+                path.quadTo(px(.44f), py(.5f), px(.44f), py(.2f))
+                cv.drawPath(path, p)
+                line(.8f, .16f, .8f, .32f)
+                line(.72f, .24f, .88f, .24f)
+                circ(.78f, .74f, .05f)
+            }
         }
         if (slash) line(.2f, .8f, .8f, .2f)
     }
@@ -477,7 +533,7 @@ class MediaRow(ctx: Context) : LinearLayout(ctx) {
     init {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(ctx.dp(16), ctx.dp(8), ctx.dp(6), ctx.dp(8))
+        setPadding(ctx.dp(14), ctx.dp(6), ctx.dp(4), ctx.dp(6))
         frame.clipToOutline = true
         img.scaleType = ImageView.ScaleType.CENTER_CROP
         frame.addView(img, FrameLayout.LayoutParams(-1, -1))
@@ -485,38 +541,38 @@ class MediaRow(ctx: Context) : LinearLayout(ctx) {
         pc.shape = GradientDrawable.OVAL
         pc.setColor(Color.parseColor("#66000000"))
         playCircle.background = pc
-        playCircle.addView(GlyphView(ctx, G.PLAY, Color.WHITE), FrameLayout.LayoutParams(ctx.dp(24), ctx.dp(24), Gravity.CENTER))
-        frame.addView(playCircle, FrameLayout.LayoutParams(ctx.dp(44), ctx.dp(44), Gravity.CENTER))
-        badge.textSize = 13f
+        playCircle.addView(GlyphView(ctx, G.PLAY, Color.WHITE), FrameLayout.LayoutParams(ctx.dp(18), ctx.dp(18), Gravity.CENTER))
+        frame.addView(playCircle, FrameLayout.LayoutParams(ctx.dp(32), ctx.dp(32), Gravity.CENTER))
+        badge.textSize = 11f
         badge.setTextColor(Color.WHITE)
         badge.setTypeface(null, Typeface.BOLD)
         val bd = GradientDrawable()
         bd.setColor(Color.parseColor("#CC111111"))
-        bd.cornerRadius = ctx.dp(6).toFloat()
+        bd.cornerRadius = ctx.dp(5).toFloat()
         badge.background = bd
-        badge.setPadding(ctx.dp(6), ctx.dp(2), ctx.dp(6), ctx.dp(2))
+        badge.setPadding(ctx.dp(5), ctx.dp(1), ctx.dp(5), ctx.dp(1))
         val bl = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END)
-        bl.setMargins(0, 0, ctx.dp(6), ctx.dp(6))
+        bl.setMargins(0, 0, ctx.dp(5), ctx.dp(5))
         frame.addView(badge, bl)
-        frame.addView(noteGlyph, FrameLayout.LayoutParams(ctx.dp(30), ctx.dp(30), Gravity.CENTER))
-        addView(frame, LayoutParams(ctx.dp(200), ctx.dp(114)))
+        frame.addView(noteGlyph, FrameLayout.LayoutParams(ctx.dp(26), ctx.dp(26), Gravity.CENTER))
+        addView(frame, LayoutParams(ctx.dp(150), ctx.dp(86)))
 
         val col = LinearLayout(ctx)
         col.orientation = VERTICAL
-        col.setPadding(ctx.dp(16), 0, ctx.dp(4), 0)
-        title.textSize = 17f
+        col.setPadding(ctx.dp(14), 0, ctx.dp(4), 0)
+        title.textSize = 16f
         title.setTextColor(Color.parseColor("#1A1A1A"))
         title.maxLines = 2
         title.ellipsize = android.text.TextUtils.TruncateAt.END
-        meta.textSize = 14f
+        meta.textSize = 13f
         meta.setTextColor(Color.parseColor("#7A7A7A"))
-        meta.setPadding(0, ctx.dp(4), 0, 0)
+        meta.setPadding(0, ctx.dp(3), 0, 0)
         col.addView(title, LayoutParams(-1, -2))
         col.addView(meta, LayoutParams(-1, -2))
         addView(col, LayoutParams(0, -2, 1f))
 
-        more.addView(GlyphView(ctx, G.MORE_V, Color.parseColor("#9A9A9A")), FrameLayout.LayoutParams(ctx.dp(26), ctx.dp(26), Gravity.CENTER))
-        addView(more, LayoutParams(ctx.dp(44), ctx.dp(44)))
+        more.addView(GlyphView(ctx, G.MORE_V, Color.parseColor("#9A9A9A")), FrameLayout.LayoutParams(ctx.dp(24), ctx.dp(24), Gravity.CENTER))
+        addView(more, LayoutParams(ctx.dp(42), ctx.dp(42)))
     }
 
     fun bind(f: MediaFile) {
@@ -524,11 +580,11 @@ class MediaRow(ctx: Context) : LinearLayout(ctx) {
         val c = context
         val st = Library.style(f.file.nameWithoutExtension, f.isAudio)
         val bg = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(st.c1, st.c2))
-        bg.cornerRadius = c.dp(if (f.isAudio) 14 else 12).toFloat()
+        bg.cornerRadius = c.dp(if (f.isAudio) 12 else 10).toFloat()
         frame.background = bg
         val lpf = frame.layoutParams as LayoutParams
-        lpf.width = c.dp(if (f.isAudio) 64 else 200)
-        lpf.height = c.dp(if (f.isAudio) 64 else 114)
+        lpf.width = c.dp(if (f.isAudio) 56 else 150)
+        lpf.height = c.dp(if (f.isAudio) 56 else 86)
         frame.layoutParams = lpf
         img.setImageBitmap(null)
         playCircle.visibility = if (f.isAudio) GONE else VISIBLE
@@ -578,23 +634,22 @@ fun showSheet(ctx: Context, title: String, items: List<SheetItem>) {
     val dv = View(ctx)
     dv.setBackgroundColor(Color.parseColor("#E6E6E6"))
     box.addView(dv, LinearLayout.LayoutParams(-1, ctx.dp(1)))
-    for (it in items) {
+    for (item in items) {
         val row = LinearLayout(ctx)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
         row.setPadding(ctx.dp(24), ctx.dp(16), ctx.dp(24), ctx.dp(16))
-        row.addView(GlyphView(ctx, it.glyph, Color.parseColor("#5F6368")), LinearLayout.LayoutParams(ctx.dp(30), ctx.dp(30)))
+        row.addView(GlyphView(ctx, item.glyph, Color.parseColor("#5F6368")), LinearLayout.LayoutParams(ctx.dp(30), ctx.dp(30)))
         val tv = TextView(ctx)
-        tv.text = it.text
+        tv.text = item.text
         tv.textSize = 20f
         tv.setTextColor(Color.parseColor("#202124"))
         tv.setPadding(ctx.dp(22), 0, 0, 0)
         row.addView(tv, LinearLayout.LayoutParams(-1, -2))
         row.setOnClickListener {
             dlg.dismiss()
-            it2Action(row)
+            item.action()
         }
-        row.tag = it.action
         box.addView(row, LinearLayout.LayoutParams(-1, -2))
     }
     dlg.setContentView(box)
@@ -608,14 +663,130 @@ fun showSheet(ctx: Context, title: String, items: List<SheetItem>) {
     dlg.show()
 }
 
-@Suppress("UNCHECKED_CAST")
-private fun it2Action(row: View) {
-    val a = row.tag as? (() -> Unit)
-    a?.invoke()
-}
-
 fun AlertDialog.tintButtons(color: Int) {
     getButton(DialogInterface.BUTTON_POSITIVE)?.setTextColor(color)
     getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(color)
     getButton(DialogInterface.BUTTON_NEUTRAL)?.setTextColor(color)
+}
+
+// Touch layer for the player: tap, double tap, hold (2x), vertical swipes, pinch zoom
+class GestureLayer(ctx: Context) : View(ctx) {
+    var enabledAll = true
+    var cbTap: () -> Unit = {}
+    var cbDouble: (Boolean) -> Unit = {}
+    var cbBrightness: (Float) -> Unit = {}
+    var cbVolume: (Float) -> Unit = {}
+    var cbHold: (Boolean) -> Unit = {}
+    var cbZoom: (Float) -> Unit = {}
+    var cbZoomEnd: () -> Unit = {}
+    var cbSwipeEnd: () -> Unit = {}
+
+    private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
+    private val handler = Handler(Looper.getMainLooper())
+    private var downX = 0f
+    private var downY = 0f
+    private var lastY = 0f
+    private var scrolling = false
+    private var holding = false
+    private var scaling = false
+    private var multi = false
+
+    private val holdRun = Runnable {
+        if (enabledAll && !scrolling && !scaling && !multi) {
+            holding = true
+            cbHold(true)
+        }
+    }
+
+    private val scaleDetector = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScaleBegin(d: ScaleGestureDetector): Boolean {
+            if (!enabledAll) return false
+            scaling = true
+            handler.removeCallbacks(holdRun)
+            return true
+        }
+
+        override fun onScale(d: ScaleGestureDetector): Boolean {
+            cbZoom(d.scaleFactor)
+            return true
+        }
+
+        override fun onScaleEnd(d: ScaleGestureDetector) {
+            cbZoomEnd()
+        }
+    })
+
+    private val tapDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: MotionEvent): Boolean = true
+
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            cbTap()
+            return true
+        }
+
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            if (enabledAll) cbDouble(e.x > width / 2f)
+            return true
+        }
+    })
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (enabledAll) scaleDetector.onTouchEvent(e)
+        tapDetector.onTouchEvent(e)
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = e.x
+                downY = e.y
+                lastY = e.y
+                scrolling = false
+                holding = false
+                scaling = false
+                multi = false
+                handler.removeCallbacks(holdRun)
+                handler.postDelayed(holdRun, 450L)
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                multi = true
+                handler.removeCallbacks(holdRun)
+                if (holding) {
+                    holding = false
+                    cbHold(false)
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!enabledAll || multi || scaling || holding) {
+                    lastY = e.y
+                    return true
+                }
+                val dx = e.x - downX
+                val dy = e.y - downY
+                if (!scrolling) {
+                    if (abs(dy) > slop * 2 && abs(dy) > abs(dx) * 1.3f) {
+                        scrolling = true
+                        handler.removeCallbacks(holdRun)
+                        lastY = e.y
+                    } else if (abs(dx) > slop || abs(dy) > slop) {
+                        handler.removeCallbacks(holdRun)
+                    }
+                }
+                if (scrolling) {
+                    val d = (lastY - e.y) / (height * 0.7f)
+                    lastY = e.y
+                    if (downX < width / 2f) cbVolume(d) else cbBrightness(d)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(holdRun)
+                if (holding) {
+                    holding = false
+                    cbHold(false)
+                }
+                if (scrolling) cbSwipeEnd()
+                scrolling = false
+                multi = false
+                scaling = false
+            }
+        }
+        return true
+    }
 }
