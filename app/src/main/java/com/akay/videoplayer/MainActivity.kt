@@ -70,13 +70,15 @@ class MainActivity : ComponentActivity() {
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
     private val GREEN = Color.parseColor("#14B800")
-    private val NAV = Color.parseColor("#0A0B1E")
+    private val NAV = Color.parseColor("#0A0714")
+    private val DIM = Color.parseColor("#8F89B0")
 
     private var all: List<MediaFile> = emptyList()
     private var loaded = false
     private var loading = false
     private var screen = "tabs"
     private var curTab = 0
+    private var folderFilter = 0
     private var openKind = "path"
     private var openPath = ""
     private var openAudio = false
@@ -103,8 +105,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun bgGradient(): GradientDrawable = GradientDrawable(
-        GradientDrawable.Orientation.TL_BR,
-        intArrayOf(Color.parseColor("#2A1048"), Color.parseColor("#0C0E26"), Color.parseColor("#1E1650"))
+        GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(Color.parseColor("#1A1438"), Color.parseColor("#0E0A24"), Color.parseColor("#080512"))
     )
 
     private fun setScreen(content: View, wrapBg: Drawable?, top: Int, bottom: Int, lightBars: Boolean) {
@@ -250,7 +252,7 @@ class MainActivity : ComponentActivity() {
         setScreen(c, bgGradient(), Color.TRANSPARENT, Color.TRANSPARENT, false)
     }
 
-    // ---------- tabs ----------
+    // ---------- tabs (image 1 style) ----------
 
     private fun iconBtn(glyph: Int, color: Int, bg: Int?, sizeDp: Int, onClick: () -> Unit): FrameLayout {
         val f = FrameLayout(this)
@@ -260,46 +262,143 @@ class MainActivity : ComponentActivity() {
         return f
     }
 
-    private fun folderCard(name: String, sub: String, audio: Boolean, onClick: () -> Unit, onMore: (() -> Unit)?): View {
+    private fun chip(text: String, glyph: Int, sel: Boolean, onClick: () -> Unit): View {
+        val c = LinearLayout(this)
+        c.orientation = LinearLayout.HORIZONTAL
+        c.gravity = Gravity.CENTER_VERTICAL
+        c.setPadding(dp(14), dp(8), dp(16), dp(8))
+        if (sel) {
+            val g = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#E43CF7"), Color.parseColor("#A855F7")))
+            g.cornerRadius = dp(24).toFloat()
+            c.background = g
+        } else {
+            val g = GradientDrawable()
+            g.cornerRadius = dp(24).toFloat()
+            g.setColor(Color.TRANSPARENT)
+            g.setStroke(dp(1), Color.parseColor("#3B3361"))
+            c.background = g
+        }
+        val col = if (sel) Color.WHITE else Color.parseColor("#B9B3DB")
+        c.addView(GlyphView(this, glyph, col), lp(dp(20), dp(20)))
+        val t = TextView(this)
+        t.text = text
+        t.textSize = 14f
+        t.setTextColor(col)
+        if (sel) t.setTypeface(null, Typeface.BOLD)
+        t.setPadding(dp(8), 0, 0, 0)
+        c.addView(t, lp(WRAP, WRAP))
+        c.setOnClickListener { onClick() }
+        return c
+    }
+
+    private fun folderCard(
+        name: String, sub: String, audio: Boolean, most: Boolean, fav: Boolean?,
+        onStar: (() -> Unit)?, onClick: () -> Unit, onLong: (() -> Unit)?
+    ): View {
         val st = Library.style(name, audio)
         val card = LinearLayout(this)
         card.orientation = LinearLayout.HORIZONTAL
         card.gravity = Gravity.CENTER_VERTICAL
-        card.setPadding(dp(16), dp(16), dp(8), dp(16))
+        card.setPadding(dp(12), dp(11), dp(8), dp(11))
         val bg = GradientDrawable()
-        bg.setColor(Color.parseColor("#1D2048"))
-        bg.cornerRadius = dp(24).toFloat()
-        bg.setStroke(dp(1), Color.parseColor("#2B2F63"))
+        bg.setColor(Color.parseColor("#231C3D"))
+        bg.cornerRadius = dp(20).toFloat()
+        bg.setStroke(dp(1), Color.parseColor("#32295A"))
         card.background = bg
         val lpc = lp(MATCH, WRAP)
-        lpc.topMargin = dp(10)
+        lpc.topMargin = dp(9)
         card.layoutParams = lpc
+
         val tile = FrameLayout(this)
         val tb = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(st.c1, st.c2))
-        tb.cornerRadius = dp(18).toFloat()
+        tb.cornerRadius = dp(16).toFloat()
         tile.background = tb
-        tile.addView(GlyphView(this, st.glyph, if (name.lowercase().contains("snapchat")) Color.BLACK else Color.WHITE), FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
-        card.addView(tile, lp(dp(58), dp(58)))
+        val gcol = if (name.lowercase().contains("snapchat")) Color.BLACK else Color.WHITE
+        tile.addView(GlyphView(this, st.glyph, gcol), FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+        card.addView(tile, lp(dp(50), dp(50)))
+
         val col = LinearLayout(this)
         col.orientation = LinearLayout.VERTICAL
-        col.setPadding(dp(18), 0, dp(8), 0)
+        col.setPadding(dp(14), 0, dp(6), 0)
         val t = TextView(this)
         t.text = name
-        t.textSize = 20f
+        t.textSize = 18f
         t.setTypeface(null, Typeface.BOLD)
         t.setTextColor(Color.WHITE)
         t.maxLines = 1
         t.ellipsize = TextUtils.TruncateAt.END
         col.addView(t, lp(MATCH, WRAP))
+        val subRow = LinearLayout(this)
+        subRow.orientation = LinearLayout.HORIZONTAL
+        subRow.gravity = Gravity.CENTER_VERTICAL
         val s = TextView(this)
         s.text = sub
-        s.textSize = 16f
-        s.setTextColor(Color.parseColor("#9AA0CC"))
-        s.setPadding(0, dp(3), 0, 0)
-        col.addView(s, lp(MATCH, WRAP))
+        s.textSize = 14f
+        s.setTextColor(Color.parseColor("#A9A4C9"))
+        subRow.addView(s, lp(WRAP, WRAP))
+        if (most) {
+            val bd = TextView(this)
+            bd.text = "\uD83D\uDD25 Most files"
+            bd.textSize = 12f
+            bd.setTextColor(Color.parseColor("#FFC83D"))
+            bd.setPadding(dp(8), dp(2), dp(8), dp(2))
+            bd.background = rr(Color.parseColor("#3A2C16"), 12)
+            val bl = lp(WRAP, WRAP)
+            bl.leftMargin = dp(8)
+            subRow.addView(bd, bl)
+        }
+        col.addView(subRow, lp(MATCH, WRAP))
         card.addView(col, lp(0, WRAP, 1f))
-        if (onMore != null) card.addView(iconBtn(G.MORE_V, Color.parseColor("#8A90B8"), null, 26) { onMore() }, lp(dp(44), dp(44)))
+
+        if (fav != null) {
+            val star = iconBtn(
+                if (fav) G.STAR_FILL else G.STAR,
+                if (fav) Color.parseColor("#FFC107") else DIM, null, 26
+            ) { onStar?.invoke() }
+            card.addView(star, lp(dp(40), dp(40)))
+        }
+        card.addView(GlyphView(this, G.CHEVRON, DIM), lp(dp(22), dp(22)))
         card.setOnClickListener { onClick() }
+        if (onLong != null) {
+            card.setOnLongClickListener {
+                onLong()
+                true
+            }
+        }
+        return card
+    }
+
+    private fun readyBanner(count: Int): View {
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.HORIZONTAL
+        card.gravity = Gravity.CENTER_VERTICAL
+        card.setPadding(dp(14), dp(12), dp(16), dp(12))
+        val bg = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#B01FDB"), Color.parseColor("#5A4BEA")))
+        bg.cornerRadius = dp(22).toFloat()
+        card.background = bg
+        val lpc = lp(MATCH, WRAP)
+        lpc.topMargin = dp(4)
+        card.layoutParams = lpc
+        val tile = FrameLayout(this)
+        tile.background = rr(Color.parseColor("#33FFFFFF"), 14)
+        tile.addView(GlyphView(this, G.DRIVE), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+        card.addView(tile, lp(dp(44), dp(44)))
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        col.setPadding(dp(14), 0, dp(8), 0)
+        val t = TextView(this)
+        t.text = "$count files ready"
+        t.textSize = 18f
+        t.setTypeface(null, Typeface.BOLD)
+        t.setTextColor(Color.WHITE)
+        col.addView(t, lp(WRAP, WRAP))
+        val s = TextView(this)
+        s.text = "Tap a folder to explore"
+        s.textSize = 14f
+        s.setTextColor(Color.parseColor("#E6D8FF"))
+        col.addView(s, lp(WRAP, WRAP))
+        card.addView(col, lp(0, WRAP, 1f))
+        card.addView(GlyphView(this, G.SPARKLE, Color.parseColor("#FFD84D")), lp(dp(30), dp(30)))
         return card
     }
 
@@ -307,9 +406,12 @@ class MainActivity : ComponentActivity() {
         screen = "tabs"
         val audio = curTab == 1
         val hidden = Prefs.hidden()
+        val visibleFiles = Library.visible(all, audio, hidden)
         val folders = Library.folders(all, audio, hidden)
-        val audioAll = Library.visibleAudio(all, hidden)
-        val videoCount = folders.sumOf { it.files.size }
+        val favs = Prefs.favFolders()
+        val shown = if (folderFilter == 1) folders.filter { favs.contains(it.path) } else folders
+        val maxCount = folders.maxOfOrNull { it.files.size } ?: 0
+        val firstMax = folders.firstOrNull { it.files.size == maxCount }
 
         val content = LinearLayout(this)
         content.orientation = LinearLayout.VERTICAL
@@ -317,36 +419,30 @@ class MainActivity : ComponentActivity() {
         val hdr = LinearLayout(this)
         hdr.orientation = LinearLayout.HORIZONTAL
         hdr.gravity = Gravity.CENTER_VERTICAL
-        hdr.setPadding(dp(24), dp(28), dp(24), dp(14))
+        hdr.setPadding(dp(22), dp(22), dp(22), dp(12))
         val hc = LinearLayout(this)
         hc.orientation = LinearLayout.VERTICAL
         val ht = TextView(this)
         ht.text = if (audio) "Music" else "Video"
-        ht.textSize = 38f
+        ht.textSize = 36f
         ht.setTypeface(null, Typeface.BOLD)
         ht.setTextColor(Color.WHITE)
         hc.addView(ht, lp(WRAP, WRAP))
         val hs = TextView(this)
-        hs.text = when {
-            !loaded -> "Scanning..."
-            audio -> "${folders.size + 1} folders \u00B7 ${audioAll.size} files"
-            else -> "${folders.size} folders \u00B7 $videoCount files"
-        }
-        hs.textSize = 17f
-        hs.setTextColor(Color.parseColor("#7F8CFF"))
+        hs.text = if (!loaded) "Scanning..." else "${folders.size} folders \u00B7 ${visibleFiles.size} files"
+        hs.textSize = 16f
+        hs.setTextColor(Color.parseColor("#8B8FF5"))
         hc.addView(hs, lp(WRAP, WRAP))
         hdr.addView(hc, lp(0, WRAP, 1f))
-        val base = if (audio) audioAll else all.filter { !it.isAudio && !hidden.contains(it.folderPath) }
-        hdr.addView(iconBtn(G.SEARCH, Color.WHITE, Color.parseColor("#272A55"), 26) { showSearch(base) }, lp(dp(52), dp(52)))
-        val mb = iconBtn(G.MORE_V, Color.WHITE, Color.parseColor("#272A55"), 26) { mainMenu() }
-        val ml = lp(dp(52), dp(52))
+        hdr.addView(iconBtn(G.SEARCH, Color.WHITE, Color.parseColor("#2D2950"), 24) { showSearch(visibleFiles) }, lp(dp(48), dp(48)))
+        val ml = lp(dp(48), dp(48))
         ml.leftMargin = dp(10)
-        hdr.addView(mb, ml)
+        hdr.addView(iconBtn(G.MORE_V, Color.WHITE, Color.parseColor("#2D2950"), 24) { mainMenu() }, ml)
         content.addView(hdr, lp(MATCH, WRAP))
 
         val list = LinearLayout(this)
         list.orientation = LinearLayout.VERTICAL
-        list.setPadding(dp(18), dp(4), dp(18), dp(16))
+        list.setPadding(dp(18), dp(2), dp(18), dp(16))
         if (!loaded) {
             val e = TextView(this)
             e.text = "Scanning your media..."
@@ -356,102 +452,103 @@ class MainActivity : ComponentActivity() {
             e.setPadding(0, dp(60), 0, 0)
             list.addView(e, lp(MATCH, WRAP))
         } else {
-            if (audio && audioAll.isNotEmpty()) {
+            list.addView(readyBanner(visibleFiles.size))
+            val chips = LinearLayout(this)
+            chips.orientation = LinearLayout.HORIZONTAL
+            chips.setPadding(0, dp(12), 0, dp(2))
+            chips.addView(chip("All folders", G.GRID, folderFilter == 0) {
+                folderFilter = 0
+                showTabs()
+            }, lp(WRAP, WRAP))
+            val cl = lp(WRAP, WRAP)
+            cl.leftMargin = dp(10)
+            chips.addView(chip("Favorites", G.FOLDER_HEART, folderFilter == 1) {
+                folderFilter = 1
+                showTabs()
+            }, cl)
+            list.addView(chips, lp(MATCH, WRAP))
+
+            if (audio && folderFilter == 0 && visibleFiles.isNotEmpty()) {
                 val lim = System.currentTimeMillis() - 7L * 86400000L
-                val rc = audioAll.count { it.modified >= lim }
-                list.addView(recentBanner(rc))
+                val rc = visibleFiles.count { it.modified >= lim }
                 list.addView(
-                    folderCard("All Audio", "${audioAll.size} tracks", true,
+                    folderCard("Recently Added", if (rc > 0) "$rc tracks added" else "No new tracks", true, false, null, null,
+                        { openFolder("recent", "", true, "Recently Added") }, null), lp(MATCH, WRAP)
+                )
+                list.addView(
+                    folderCard("All Audio", "${visibleFiles.size} tracks", true, false, null, null,
                         { openFolder("allaudio", "", true, "All Audio") },
-                        { folderSheet("All Audio", audioAll, false, "", true) }), lp(MATCH, WRAP)
+                        { folderSheet("All Audio", visibleFiles, false, "", true) }), lp(MATCH, WRAP)
                 )
             }
-            for (f in folders) {
+            for (f in shown) {
                 val sub = f.files.size.toString() + if (audio) " tracks" else " videos"
                 list.addView(
-                    folderCard(f.name, sub, audio,
+                    folderCard(f.name, sub, audio, f === firstMax && folders.size > 2 && maxCount > 1,
+                        favs.contains(f.path),
+                        {
+                            Prefs.toggleFavFolder(f.path)
+                            showTabs()
+                        },
                         { openFolder("path", f.path, audio, f.name) },
                         { folderSheet(f.name, f.files, true, f.path, audio) }), lp(MATCH, WRAP)
                 )
             }
-            if (folders.isEmpty() && !(audio && audioAll.isNotEmpty())) {
+            if (shown.isEmpty()) {
                 val e = TextView(this)
-                e.text = if (audio) "No music found" else "No videos found"
+                e.text = if (folderFilter == 1) "No favorite folders yet. Tap the star on a folder."
+                else if (audio) "No music found" else "No videos found"
                 e.textSize = 16f
                 e.setTextColor(Color.parseColor("#9AA0CC"))
                 e.gravity = Gravity.CENTER
-                e.setPadding(0, dp(60), 0, 0)
+                e.setPadding(dp(20), dp(50), dp(20), 0)
                 list.addView(e, lp(MATCH, WRAP))
             }
         }
         val sv = ScrollView(this)
+        sv.isVerticalScrollBarEnabled = false
         sv.addView(list)
         content.addView(sv, lp(MATCH, 0, 1f))
         content.addView(buildNav(), lp(MATCH, WRAP))
         setScreen(content, bgGradient(), Color.TRANSPARENT, NAV, false)
     }
 
-    private fun recentBanner(count: Int): View {
-        val card = LinearLayout(this)
-        card.orientation = LinearLayout.HORIZONTAL
-        card.gravity = Gravity.CENTER_VERTICAL
-        card.setPadding(dp(18), dp(18), dp(18), dp(18))
-        val bg = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#7B2FFF"), Color.parseColor("#1E5BFF")))
-        bg.cornerRadius = dp(26).toFloat()
-        card.background = bg
-        card.elevation = dp(8).toFloat()
-        card.outlineSpotShadowColor = Color.parseColor("#7B2FFF")
-        val lpc = lp(MATCH, WRAP)
-        lpc.setMargins(0, dp(4), 0, dp(10))
-        card.layoutParams = lpc
-        val tile = FrameLayout(this)
-        tile.background = rr(Color.parseColor("#33FFFFFF"), 18)
-        tile.addView(GlyphView(this, G.CLOCK), FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
-        card.addView(tile, lp(dp(58), dp(58)))
-        val col = LinearLayout(this)
-        col.orientation = LinearLayout.VERTICAL
-        col.setPadding(dp(16), 0, dp(8), 0)
-        val t = TextView(this)
-        t.text = "Recently Added"
-        t.textSize = 21f
-        t.setTypeface(null, Typeface.BOLD)
-        t.setTextColor(Color.WHITE)
-        col.addView(t, lp(WRAP, WRAP))
-        val s = TextView(this)
-        s.text = if (count > 0) "$count tracks added" else "No new tracks"
-        s.textSize = 16f
-        s.setTextColor(Color.parseColor("#D8D8FF"))
-        col.addView(s, lp(WRAP, WRAP))
-        card.addView(col, lp(0, WRAP, 1f))
-        card.addView(GlyphView(this, G.CHEVRON, Color.parseColor("#D8D8FF")), lp(dp(28), dp(28)))
-        card.setOnClickListener { openFolder("recent", "", true, "Recently Added") }
-        return card
-    }
-
     private fun buildNav(): View {
         val nav = LinearLayout(this)
         nav.orientation = LinearLayout.HORIZONTAL
         nav.setBackgroundColor(NAV)
-        nav.setPadding(dp(12), dp(10), dp(12), dp(12))
+        nav.setPadding(dp(12), dp(8), dp(12), dp(10))
         for (i in 0..1) {
             val sel = curTab == i
             val item = LinearLayout(this)
             item.orientation = LinearLayout.VERTICAL
             item.gravity = Gravity.CENTER_HORIZONTAL
+            val size = if (sel) 54 else 48
             val c = FrameLayout(this)
-            if (sel) c.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#C04DFF"), Color.parseColor("#6A3DFF"))).also { it.shape = GradientDrawable.OVAL }
+            if (sel) {
+                val gd = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#C04DFF"), Color.parseColor("#6A3DFF")))
+                gd.shape = GradientDrawable.OVAL
+                c.background = gd
+                c.elevation = dp(8).toFloat()
+                c.outlineSpotShadowColor = Color.parseColor("#9B4DFF")
+            } else {
+                c.background = oval(Color.parseColor("#2A2640"))
+            }
             val gl = if (i == 0) G.CLAPPER else G.NOTE
-            c.addView(GlyphView(this, gl, if (sel) Color.WHITE else Color.parseColor("#8A8FB5")), FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
-            item.addView(c, lp(dp(54), dp(54)))
+            c.addView(GlyphView(this, gl, if (sel) Color.WHITE else DIM), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+            val cl = lp(dp(size), dp(size))
+            cl.topMargin = if (sel) 0 else dp(3)
+            item.addView(c, cl)
             val t = TextView(this)
             t.text = if (i == 0) "Video" else "Music"
-            t.textSize = 16f
-            t.setTextColor(if (sel) Color.WHITE else Color.parseColor("#8A8FB5"))
+            t.textSize = 15f
+            t.setTextColor(if (sel) Color.WHITE else DIM)
             if (sel) t.setTypeface(null, Typeface.BOLD)
             t.setPadding(0, dp(4), 0, 0)
             item.addView(t, lp(WRAP, WRAP))
             item.setOnClickListener {
                 curTab = i
+                folderFilter = 0
                 showTabs()
             }
             nav.addView(item, lp(0, WRAP, 1f))
