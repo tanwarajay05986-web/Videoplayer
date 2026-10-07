@@ -61,6 +61,8 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.SubtitleView
 import java.io.File
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 object LibraryState {
     var dirty = false
@@ -82,6 +84,8 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var artBox: LinearLayout
     private lateinit var artImg: ImageView
     private lateinit var artTitle: TextView
+    private lateinit var gest: GestureLayer
+    private lateinit var hud: TextView
     private lateinit var controls: FrameLayout
     private lateinit var titleTv: TextView
     private lateinit var seek: SeekBar
@@ -96,6 +100,9 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var shotBtn: View
     private lateinit var abLabel: TextView
     private lateinit var unlockBtn: View
+    private lateinit var btnBack10: View
+    private lateinit var btnFwd10: View
+    private lateinit var speedWord: View
     private lateinit var panelWrap: FrameLayout
     private lateinit var panelBox: LinearLayout
     private lateinit var brightVal: TextView
@@ -121,6 +128,10 @@ class PlayerActivity : ComponentActivity() {
     private var cfContrast = 100
     private var cfSat = 100
     private var cfWarm = 0
+    private var zoom = 1f
+    private var volFrac = -1f
+    private var holdPrev = 1f
+    private var holdingFast = false
 
     private val resizeModes = intArrayOf(
         AspectRatioFrameLayout.RESIZE_MODE_FIT,
@@ -135,6 +146,8 @@ class PlayerActivity : ComponentActivity() {
     private val subPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) addSubtitle(uri)
     }
+
+    private val hudHide = Runnable { hud.visibility = View.GONE }
 
     // ---------- small helpers ----------
 
@@ -228,6 +241,7 @@ class PlayerActivity : ComponentActivity() {
         setContentView(root)
         hideBars()
         attachPlayer(pl)
+        applyOrientationUi()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
@@ -269,6 +283,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         updatePanelWidth()
+        applyOrientationUi()
         hideBars()
     }
 
@@ -286,6 +301,15 @@ class PlayerActivity : ComponentActivity() {
         val c = WindowInsetsControllerCompat(window, root)
         c.hide(WindowInsetsCompat.Type.systemBars())
         c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    // portrait: only lock, previous, play/pause, next, screen size. landscape: everything.
+    private fun applyOrientationUi() {
+        val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val v = if (land) View.VISIBLE else View.GONE
+        btnBack10.visibility = v
+        btnFwd10.visibility = v
+        speedWord.visibility = v
     }
 
     // ---------- player wiring ----------
@@ -306,6 +330,9 @@ class PlayerActivity : ComponentActivity() {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             resetAb()
+            zoom = 1f
+            arFrame.scaleX = 1f
+            arFrame.scaleY = 1f
             syncUi()
         }
 
@@ -427,6 +454,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun lockScreen() {
         locked = true
+        gest.enabledAll = false
         controls.visibility = View.GONE
         showUnlock()
         toast("Screen locked")
@@ -434,8 +462,92 @@ class PlayerActivity : ComponentActivity() {
 
     private fun unlock() {
         locked = false
+        gest.enabledAll = true
         unlockBtn.visibility = View.GONE
         toast("Unlocked")
+    }
+
+    // ---------- gestures ----------
+
+    private fun showHud(text: String, ms: Long) {
+        hud.text = text
+        hud.visibility = View.VISIBLE
+        main.removeCallbacks(hudHide)
+        main.postDelayed(hudHide, ms)
+    }
+
+    private fun setupGestures() {
+        gest.cbTap = { toggleControls() }
+        gest.cbDouble = { right ->
+            if (!locked) {
+                seekBy(if (right) 10000L else -10000L)
+                showHud(if (right) "+10s" else "-10s", 600)
+            }
+        }
+        gest.cbBrightness = { d -> adjustBrightness(d) }
+        gest.cbVolume = { d -> adjustVolume(d) }
+        gest.cbHold = { on -> holdFast(on) }
+        gest.cbZoom = { f -> zoomBy(f) }
+        gest.cbZoomEnd = { zoomEnd() }
+        gest.cbSwipeEnd = { volFrac = -1f }
+    }
+
+    private fun systemBright(): Float = try {
+        Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS) / 255f
+    } catch (e: Throwable) {
+        0.5f
+    }
+
+    private fun adjustBrightness(d: Float) {
+        val a = window.attributes
+        val base = if (a.screenBrightness >= 0f) a.screenBrightness else systemBright()
+        val v = (base + d).coerceIn(0.01f, 1f)
+        a.screenBrightness = v
+        window.attributes = a
+        showHud("Brightness " + (v * 100).roundToInt(), 700)
+    }
+
+    private fun adjustVolume(d: Float) {
+        val am = getSystemService(AudioManager::class.java)
+        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (volFrac < 0f) volFrac = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxOf(1, max)
+        volFrac = (volFrac + d).coerceIn(0f, 1f)
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, (volFrac * max).roundToInt(), 0)
+        showHud("Volume " + (volFrac * 100).roundToInt(), 700)
+    }
+
+    private fun holdFast(on: Boolean) {
+        val pl = p ?: return
+        if (on) {
+            if (!pl.isPlaying) return
+            holdPrev = pl.playbackParameters.speed
+            pl.setPlaybackSpeed(2f)
+            holdingFast = true
+            showHud("2X  \u25B6\u25B6", 60000L)
+        } else if (holdingFast) {
+            pl.setPlaybackSpeed(holdPrev)
+            holdingFast = false
+            main.removeCallbacks(hudHide)
+            hud.visibility = View.GONE
+        }
+    }
+
+    private fun zoomBy(f: Float) {
+        zoom = (zoom * f).coerceIn(0.5f, 5f)
+        arFrame.scaleX = zoom
+        arFrame.scaleY = zoom
+        showHud((zoom * 100).roundToInt().toString() + "%", 3000L)
+    }
+
+    private fun zoomEnd() {
+        if (abs(zoom - 1f) < 0.04f) {
+            zoom = 1f
+            arFrame.scaleX = 1f
+            arFrame.scaleY = 1f
+            showHud("100%", 350L)
+        } else {
+            showHud((zoom * 100).roundToInt().toString() + "%", 700L)
+        }
     }
 
     // ---------- UI ----------
@@ -443,7 +555,6 @@ class PlayerActivity : ComponentActivity() {
     private fun buildUi() {
         root = FrameLayout(this)
         root.setBackgroundColor(Color.BLACK)
-        root.setOnClickListener { toggleControls() }
 
         arFrame = AspectRatioFrameLayout(this)
         tex = TextureView(this)
@@ -476,6 +587,10 @@ class PlayerActivity : ComponentActivity() {
         artBox.addView(artTitle, lp(MATCH, WRAP))
         root.addView(artBox, FrameLayout.LayoutParams(MATCH, MATCH, Gravity.CENTER))
 
+        gest = GestureLayer(this)
+        setupGestures()
+        root.addView(gest, FrameLayout.LayoutParams(MATCH, MATCH))
+
         buildControls()
         root.addView(controls, FrameLayout.LayoutParams(MATCH, MATCH))
 
@@ -488,6 +603,16 @@ class PlayerActivity : ComponentActivity() {
         val al = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
         al.topMargin = dp(8)
         root.addView(abLabel, al)
+
+        hud = TextView(this)
+        hud.textSize = 26f
+        hud.setTypeface(null, Typeface.BOLD)
+        hud.setTextColor(Color.WHITE)
+        hud.gravity = Gravity.CENTER
+        hud.setPadding(dp(24), dp(12), dp(24), dp(12))
+        hud.background = rr(Color.parseColor("#AA000000"), 26)
+        hud.visibility = View.GONE
+        root.addView(hud, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
 
         buildPanel()
         root.addView(panelWrap, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -522,7 +647,7 @@ class PlayerActivity : ComponentActivity() {
         bar.addView(titleTv, lp(0, WRAP, 1f))
         rotGlyph = plain(G.ROTATE) { toggleRotLock() }
         bar.addView(rotGlyph, lp(dp(38), dp(38)))
-        bar.addView(plain(G.QUEUE) { queueDialog() }, lpm(dp(38), dp(38), dp(14)))
+        bar.addView(plain(G.NOTE) { audioTrackDialog() }, lpm(dp(38), dp(38), dp(14)))
         bar.addView(plain(G.MORE_V) { showPanel() }, lpm(dp(38), dp(38), dp(8)))
         top.addView(bar, lp(MATCH, WRAP))
 
@@ -615,7 +740,8 @@ class PlayerActivity : ComponentActivity() {
         lockB.setOnClickListener { lockScreen() }
         br.addView(lockB, lp(dp(46), dp(46)))
         br.addView(View(this), lp(0, 1, 1f))
-        br.addView(plain(G.REPLAY) { seekBy(-10000L) }, lp(dp(50), dp(50)))
+        btnBack10 = plain(G.REPLAY) { seekBy(-10000L) }
+        br.addView(btnBack10, lp(dp(50), dp(50)))
         br.addView(plain(G.PREV) { prevItem() }, lpm(dp(46), dp(46), dp(10)))
         val playRing = FrameLayout(this)
         val pb = GradientDrawable()
@@ -631,7 +757,8 @@ class PlayerActivity : ComponentActivity() {
         }
         br.addView(playRing, lpm(dp(66), dp(66), dp(10)))
         br.addView(plain(G.NEXT) { nextItem() }, lpm(dp(46), dp(46), dp(10)))
-        br.addView(plain(G.FORWARD) { seekBy(10000L) }, lpm(dp(50), dp(50), dp(10)))
+        btnFwd10 = plain(G.FORWARD) { seekBy(10000L) }
+        br.addView(btnFwd10, lpm(dp(50), dp(50), dp(10)))
         br.addView(View(this), lp(0, 1, 1f))
         val speedTv = TextView(this)
         speedTv.text = "Speed"
@@ -642,6 +769,7 @@ class PlayerActivity : ComponentActivity() {
             speedDialog()
             showControls()
         }
+        speedWord = speedTv
         br.addView(speedTv, lp(WRAP, WRAP))
         br.addView(plain(G.RESIZE) { cycleResize() }, lpm(dp(46), dp(46), dp(8)))
         bottom.addView(br, lp(MATCH, WRAP))
@@ -724,16 +852,6 @@ class PlayerActivity : ComponentActivity() {
         AlertDialog.Builder(this).setTitle("Playback speed").setItems(names) { _, w ->
             pl.setPlaybackSpeed(speeds[w])
             speedChip.text = speedText(speeds[w])
-        }.show()
-    }
-
-    private fun queueDialog() {
-        val pl = p ?: return
-        val ci = pl.currentMediaItemIndex
-        val names = PlayerManager.queue.mapIndexed { i, f -> (if (i == ci) "\u25B6  " else "") + f.file.name }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("Playlist").setItems(names) { _, w ->
-            pl.seekTo(w, 0L)
-            pl.playWhenReady = true
         }.show()
     }
 
@@ -886,8 +1004,7 @@ class PlayerActivity : ComponentActivity() {
         val rh = LinearLayout(this)
         rh.orientation = LinearLayout.HORIZONTAL
         rh.gravity = Gravity.CENTER_VERTICAL
-        val rt = title("Repeat Mode")
-        rh.addView(rt, lp(0, WRAP, 1f))
+        rh.addView(title("Repeat Mode"), lp(0, WRAP, 1f))
         repeatName = TextView(this)
         repeatName.textSize = 20f
         repeatName.setTextColor(Color.WHITE)
@@ -912,7 +1029,9 @@ class PlayerActivity : ComponentActivity() {
             seg.addView(b, lp(0, dp(64), 1f))
         }
         col.addView(seg, lp(MATCH, WRAP))
-        col.addView(divider(), lpm(MATCH, dp(1), 0).also { it.topMargin = dp(18) })
+        val dv1 = lp(MATCH, dp(1))
+        dv1.topMargin = dp(18)
+        col.addView(divider(), dv1)
 
         col.addView(title("Brightness"), lp(MATCH, WRAP))
         val br = LinearLayout(this)
@@ -947,7 +1066,9 @@ class PlayerActivity : ComponentActivity() {
         volVal.gravity = Gravity.CENTER
         vr.addView(volVal, lp(dp(56), WRAP))
         col.addView(vr, lp(MATCH, WRAP))
-        col.addView(divider(), lpm(MATCH, dp(1), 0).also { it.topMargin = dp(18) })
+        val dv2 = lp(MATCH, dp(1))
+        dv2.topMargin = dp(18)
+        col.addView(divider(), dv2)
 
         col.addView(title("Decoder"), lp(MATCH, WRAP))
         val dr = LinearLayout(this)
@@ -1071,11 +1192,7 @@ class PlayerActivity : ComponentActivity() {
         styleChip(swChip, PlayerManager.softDecoder)
         shotDot.visibility = if (showShot) View.VISIBLE else View.INVISIBLE
         val cb = window.attributes.screenBrightness
-        val bv = if (cb >= 0f) (cb * 100).toInt() else try {
-            Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS) * 100 / 255
-        } catch (e: Throwable) {
-            50
-        }
+        val bv = if (cb >= 0f) (cb * 100).toInt() else (systemBright() * 100).toInt()
         brightSeek.progress = bv
         brightVal.text = bv.toString()
         val am = getSystemService(AudioManager::class.java)
@@ -1350,8 +1467,8 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun applyFilter() {
-        val plain = cfBright == 0 && cfContrast == 100 && cfSat == 100 && cfWarm == 0 && !enhance
-        if (plain) {
+        val plainView = cfBright == 0 && cfContrast == 100 && cfSat == 100 && cfWarm == 0 && !enhance
+        if (plainView) {
             tex.setLayerType(View.LAYER_TYPE_NONE, null)
             return
         }
