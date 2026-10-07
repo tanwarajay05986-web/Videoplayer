@@ -37,6 +37,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -165,6 +166,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var chevGlyph: GlyphView
     private lateinit var speedChip: TextView
     private lateinit var extraRow: LinearLayout
+    private lateinit var centerG: LinearLayout
     private lateinit var shotBtn: View
     private lateinit var abLabel: TextView
     private lateinit var unlockBtn: View
@@ -418,6 +420,14 @@ class PlayerActivity : ComponentActivity() {
         btnBack10.visibility = v
         btnFwd10.visibility = v
         speedWord.visibility = v
+        val g = if (land) dp(44) else dp(30)
+        for (i in 0 until centerG.childCount) {
+            val c = centerG.getChildAt(i)
+            val l = c.layoutParams as LinearLayout.LayoutParams
+            l.leftMargin = g / 2
+            l.rightMargin = g / 2
+            c.layoutParams = l
+        }
     }
 
     private fun restoreOrientation() {
@@ -757,9 +767,9 @@ class PlayerActivity : ComponentActivity() {
         buildPanel()
         root.addView(panelWrap, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        unlockBtn = ring(G.UNLOCK, 52) { unlock() }
+        unlockBtn = ring(G.UNLOCK, 42) { unlock() }
         unlockBtn.visibility = View.GONE
-        val ul = FrameLayout.LayoutParams(dp(52), dp(52), Gravity.START or Gravity.CENTER_VERTICAL)
+        val ul = FrameLayout.LayoutParams(dp(42), dp(42), Gravity.START or Gravity.CENTER_VERTICAL)
         ul.leftMargin = dp(28)
         root.addView(unlockBtn, ul)
     }
@@ -770,41 +780,41 @@ class PlayerActivity : ComponentActivity() {
         val top = LinearLayout(this)
         top.orientation = LinearLayout.VERTICAL
         top.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.parseColor("#AA000000"), Color.TRANSPARENT))
-        top.setPadding(dp(20), dp(12), dp(20), dp(28))
+        top.setPadding(dp(20), dp(36), dp(20), dp(28))
 
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         val back = GlyphView(this, G.BACK)
         back.setOnClickListener { finish() }
-        bar.addView(back, lp(dp(38), dp(38)))
+        bar.addView(back, lp(dp(30), dp(30)))
         titleTv = TextView(this)
-        titleTv.textSize = 20f
+        titleTv.textSize = 16f
         titleTv.setTextColor(Color.WHITE)
         titleTv.maxLines = 1
         titleTv.ellipsize = android.text.TextUtils.TruncateAt.END
-        titleTv.setPadding(dp(16), 0, dp(8), 0)
+        titleTv.setPadding(dp(14), 0, dp(8), 0)
         bar.addView(titleTv, lp(0, WRAP, 1f))
         rotGlyph = plain(G.ROTATE) { toggleRotLock() }
-        bar.addView(rotGlyph, lp(dp(38), dp(38)))
-        bar.addView(plain(G.NOTE) { audioTrackDialog() }, lpm(dp(38), dp(38), dp(14)))
-        bar.addView(plain(G.MORE_V) { showPanel() }, lpm(dp(38), dp(38), dp(8)))
+        bar.addView(rotGlyph, lp(dp(30), dp(30)))
+        bar.addView(plain(G.NOTE) { audioTrackDialog() }, lpm(dp(30), dp(30), dp(12)))
+        bar.addView(plain(G.MORE_V) { showPanel() }, lpm(dp(30), dp(30), dp(8)))
         top.addView(bar, lp(MATCH, WRAP))
 
+        // quick row: the extra buttons live inside the arrow and open to its right
         val quick = LinearLayout(this)
         quick.orientation = LinearLayout.HORIZONTAL
         quick.gravity = Gravity.CENTER_VERTICAL
-        quick.setPadding(0, dp(14), 0, 0)
-        quick.addView(ring(G.ROTATE, 54) { manualRotate() }, lp(dp(54), dp(54)))
-        val muteRing = ring(G.VOLUME, 54) { toggleMute() }
+        quick.addView(ring(G.ROTATE, 40) { manualRotate() }, lp(dp(40), dp(40)))
+        val muteRing = ring(G.VOLUME, 40) { toggleMute() }
         muteGlyph = glyphOf(muteRing)
-        quick.addView(muteRing, lpm(dp(54), dp(54), dp(14)))
-        quick.addView(ring(G.HEADPHONE, 54) { goBackground() }, lpm(dp(54), dp(54), dp(14)))
+        quick.addView(muteRing, lpm(dp(40), dp(40), dp(12)))
+        quick.addView(ring(G.HEADPHONE, 40) { goBackground() }, lpm(dp(40), dp(40), dp(12)))
         val speedRing = FrameLayout(this)
         speedRing.background = oval(RINGBG)
         speedChip = TextView(this)
         speedChip.text = "1X"
-        speedChip.textSize = 17f
+        speedChip.textSize = 14f
         speedChip.setTypeface(null, Typeface.BOLD)
         speedChip.setTextColor(Color.WHITE)
         speedChip.gravity = Gravity.CENTER
@@ -813,24 +823,29 @@ class PlayerActivity : ComponentActivity() {
             speedDialog()
             showControls()
         }
-        quick.addView(speedRing, lpm(dp(54), dp(54), dp(14)))
-        val chevRing = ring(G.CHEVRON, 44) { toggleExtra() }
+        quick.addView(speedRing, lpm(dp(40), dp(40), dp(12)))
+        val chevRing = ring(G.CHEVRON, 32) { toggleExtra() }
         chevGlyph = glyphOf(chevRing)
-        quick.addView(chevRing, lpm(dp(44), dp(44), dp(14)))
-        top.addView(quick, lp(MATCH, WRAP))
+        quick.addView(chevRing, lpm(dp(32), dp(32), dp(12)))
 
         extraRow = LinearLayout(this)
         extraRow.orientation = LinearLayout.HORIZONTAL
         extraRow.gravity = Gravity.CENTER_VERTICAL
-        extraRow.setPadding(0, dp(12), 0, 0)
         extraRow.visibility = View.GONE
-        shotBtn = ring(G.CAMERA, 48) { takeShot() }
+        shotBtn = ring(G.CAMERA, 36) { takeShot() }
         shotBtn.visibility = View.GONE
-        extraRow.addView(shotBtn, lp(dp(48), dp(48)))
-        extraRow.addView(ring(G.AB, 48) { abRepeat() }, lpm(dp(48), dp(48), dp(12)))
-        extraRow.addView(ring(G.BOOKMARK, 48) { addBookmark() }, lpm(dp(48), dp(48), dp(12)))
-        extraRow.addView(ring(G.PIP, 48) { enterPip() }, lpm(dp(48), dp(48), dp(12)))
-        top.addView(extraRow, lp(MATCH, WRAP))
+        extraRow.addView(shotBtn, lpm(dp(36), dp(36), dp(10)))
+        extraRow.addView(ring(G.AB, 36) { abRepeat() }, lpm(dp(36), dp(36), dp(10)))
+        extraRow.addView(ring(G.BOOKMARK, 36) { addBookmark() }, lpm(dp(36), dp(36), dp(10)))
+        extraRow.addView(ring(G.PIP, 36) { enterPip() }, lpm(dp(36), dp(36), dp(10)))
+        quick.addView(extraRow, lp(WRAP, WRAP))
+
+        val qs = HorizontalScrollView(this)
+        qs.isHorizontalScrollBarEnabled = false
+        qs.addView(quick)
+        val qlp = lp(MATCH, WRAP)
+        qlp.topMargin = dp(12)
+        top.addView(qs, qlp)
         controls.addView(top, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP))
 
         val bottom = LinearLayout(this)
@@ -842,7 +857,7 @@ class PlayerActivity : ComponentActivity() {
         sr.orientation = LinearLayout.HORIZONTAL
         sr.gravity = Gravity.CENTER_VERTICAL
         curT = TextView(this)
-        curT.textSize = 17f
+        curT.textSize = 13f
         curT.setTextColor(Color.WHITE)
         curT.text = "00:00"
         seek = SeekBar(this)
@@ -872,7 +887,7 @@ class PlayerActivity : ComponentActivity() {
             }
         })
         durT = TextView(this)
-        durT.textSize = 17f
+        durT.textSize = 13f
         durT.setTextColor(Color.WHITE)
         durT.text = "00:00"
         sr.addView(curT, lp(WRAP, WRAP))
@@ -890,15 +905,15 @@ class PlayerActivity : ComponentActivity() {
         leftG.gravity = Gravity.START or Gravity.CENTER_VERTICAL
         val lockB = GlyphView(this, G.UNLOCK)
         lockB.setOnClickListener { lockScreen() }
-        leftG.addView(lockB, lp(dp(46), dp(46)))
+        leftG.addView(lockB, lp(dp(34), dp(34)))
 
-        val gap = dp(30)
-        val centerG = LinearLayout(this)
+        val gap = dp(44)
+        centerG = LinearLayout(this)
         centerG.orientation = LinearLayout.HORIZONTAL
         centerG.gravity = Gravity.CENTER_VERTICAL
         btnBack10 = plain(G.REPLAY) { seekBy(-10000L) }
-        centerG.addView(btnBack10, lpg(dp(50), dp(50), gap))
-        centerG.addView(plain(G.PREV) { prevItem() }, lpg(dp(46), dp(46), gap))
+        centerG.addView(btnBack10, lpg(dp(38), dp(38), gap))
+        centerG.addView(plain(G.PREV) { prevItem() }, lpg(dp(42), dp(42), gap))
         val playRing = FrameLayout(this)
         val pb = GradientDrawable()
         pb.shape = GradientDrawable.OVAL
@@ -906,21 +921,21 @@ class PlayerActivity : ComponentActivity() {
         pb.setStroke(dp(2), Color.WHITE)
         playRing.background = pb
         playGlyph = GlyphView(this, G.PLAY)
-        playRing.addView(playGlyph, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER))
+        playRing.addView(playGlyph, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
         playRing.setOnClickListener {
             togglePlay()
             showControls()
         }
-        centerG.addView(playRing, lpg(dp(66), dp(66), gap))
-        centerG.addView(plain(G.NEXT) { nextItem() }, lpg(dp(46), dp(46), gap))
+        centerG.addView(playRing, lpg(dp(46), dp(46), gap))
+        centerG.addView(plain(G.NEXT) { nextItem() }, lpg(dp(42), dp(42), gap))
         btnFwd10 = plain(G.FORWARD) { seekBy(10000L) }
-        centerG.addView(btnFwd10, lpg(dp(50), dp(50), gap))
+        centerG.addView(btnFwd10, lpg(dp(38), dp(38), gap))
 
         val rightG = LinearLayout(this)
         rightG.gravity = Gravity.END or Gravity.CENTER_VERTICAL
         val speedTv = TextView(this)
         speedTv.text = "Speed"
-        speedTv.textSize = 18f
+        speedTv.textSize = 16f
         speedTv.setTextColor(Color.WHITE)
         speedTv.setPadding(dp(8), dp(8), dp(8), dp(8))
         speedTv.setOnClickListener {
@@ -929,7 +944,7 @@ class PlayerActivity : ComponentActivity() {
         }
         speedWord = speedTv
         rightG.addView(speedTv, lp(WRAP, WRAP))
-        rightG.addView(plain(G.RESIZE) { cycleResize() }, lp(dp(46), dp(46)))
+        rightG.addView(plain(G.RESIZE) { cycleResize() }, lp(dp(32), dp(32)))
 
         br.addView(leftG, lp(0, WRAP, 1f))
         br.addView(centerG, lp(WRAP, WRAP))
