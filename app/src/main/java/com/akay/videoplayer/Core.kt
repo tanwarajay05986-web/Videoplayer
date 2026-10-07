@@ -69,6 +69,21 @@ object Prefs {
 
     fun hidden(): MutableSet<String> = getSet("hidden")
 
+    fun favFolders(): MutableSet<String> = getSet("favf")
+
+    fun toggleFavFolder(path: String): Boolean {
+        val set = getSet("favf")
+        val now = if (set.contains(path)) {
+            set.remove(path)
+            false
+        } else {
+            set.add(path)
+            true
+        }
+        putSet("favf", set)
+        return now
+    }
+
     fun isFavorite(path: String): Boolean = getSet("fav").contains(path)
 
     fun toggleFavorite(path: String): Boolean {
@@ -149,11 +164,21 @@ object Library {
     )
     private val AUDIO_SKIP = setOf("ringtones", "notifications", "alarms")
 
+    // folders that are never shown (compared without spaces/underscores/dashes)
+    private val EXCLUDED = setOf(
+        "launchdesk", "modify", "sent", "server", "test", "tolls", "tools", "utils"
+    )
+
     private val PALETTE = listOf(
         Pair("#FF7A59", "#E5384C"), Pair("#4FACFE", "#2F6BFF"), Pair("#43E97B", "#14B87A"),
         Pair("#FA709A", "#E0409A"), Pair("#A18CFF", "#6C4DFF"), Pair("#FFC371", "#FF8A3D"),
         Pair("#30CFD0", "#2B7FD4"), Pair("#F093FB", "#B24DE8")
     )
+
+    fun excluded(name: String): Boolean {
+        val k = name.lowercase(Locale.ROOT).replace(" ", "").replace("_", "").replace("-", "")
+        return EXCLUDED.contains(k)
+    }
 
     fun roots(ctx: Context): List<File> {
         val list = ArrayList<File>()
@@ -207,29 +232,26 @@ object Library {
         }
     }
 
+    fun visible(all: List<MediaFile>, audio: Boolean, hidden: Set<String>): List<MediaFile> =
+        all.filter {
+            val fn = File(it.folderPath).name
+            it.isAudio == audio && !hidden.contains(it.folderPath) && !excluded(fn) &&
+                !(audio && fn.equals("CapCut Audio", true))
+        }
+
+    fun visibleAudio(all: List<MediaFile>, hidden: Set<String>): List<MediaFile> =
+        visible(all, true, hidden)
+
     fun folders(all: List<MediaFile>, audio: Boolean, hidden: Set<String>): List<FolderItem> {
         val map = LinkedHashMap<String, MutableList<MediaFile>>()
-        for (f in all) {
-            if (f.isAudio != audio) continue
-            val fp = f.folderPath
-            if (hidden.contains(fp)) continue
-            map.getOrPut(fp) { ArrayList() }.add(f)
+        for (f in visible(all, audio, hidden)) {
+            map.getOrPut(f.folderPath) { ArrayList() }.add(f)
         }
         val res = ArrayList<FolderItem>()
-        for ((k, v) in map) {
-            val name = File(k).name
-            if (audio && name.equals("CapCut Audio", true)) continue
-            res.add(FolderItem(k, name, v))
-        }
+        for ((k, v) in map) res.add(FolderItem(k, File(k).name, v))
         res.sortBy { it.name.lowercase(Locale.ROOT) }
         return res
     }
-
-    fun visibleAudio(all: List<MediaFile>, hidden: Set<String>): List<MediaFile> =
-        all.filter {
-            it.isAudio && !hidden.contains(it.folderPath) &&
-                !File(it.folderPath).name.equals("CapCut Audio", true)
-        }
 
     fun sort(list: List<MediaFile>, mode: Int): List<MediaFile> = when (mode) {
         0 -> list.sortedBy { it.file.name.lowercase(Locale.ROOT) }
@@ -245,9 +267,10 @@ object Library {
         fun st(a: String, b: String, g: Int) = FolderStyle(Color.parseColor(a), Color.parseColor(b), g)
         return when {
             n == "all audio" -> st("#C03BFF", "#9B00E8", G.DISC)
-            n.contains("capcut") -> st("#2E3A4B", "#121923", G.SCISSORS)
+            n.contains("alight") -> st("#FF3FA4", "#8E3DFF", G.CLAPPER)
+            n.contains("capcut") -> st("#5A6A82", "#232C3B", G.SCISSORS)
             n.contains("download") -> st("#FFB300", "#FF6A00", G.DOWNLOAD)
-            n.contains("edit") -> st("#8A5CFF", "#5B34E6", G.CLAPPER)
+            n.contains("edit") -> st("#A47BFF", "#6A3DE8", G.CLAPPER)
             n.contains("inshot") -> st("#00DD99", "#00B48A", G.FILM)
             n.contains("instagram") -> st("#FF2D75", "#B01CC6", G.APERTURE)
             n.contains("screenshot") || n.contains("screen record") -> st("#00C8FF", "#0072FF", G.IMAGE)
@@ -259,7 +282,7 @@ object Library {
             n.contains("youtube") || n.contains("tiktok") || n.contains("snaptube") ||
                 n.contains("vidmate") -> st("#FF3B3B", "#D90000", G.PLAY_SQ)
             n.contains("record") -> st("#FF3B5C", "#F5163A", if (audio) G.NOTE else G.MIC)
-            n.contains("camera") || n == "dcim" -> st("#5C6BC0", "#3949AB", G.CAMERA)
+            n.contains("camera") || n == "dcim" -> st("#1FA2FF", "#3D4FFF", G.CAMERA)
             n.contains("movie") -> st("#7C4DFF", "#512DA8", G.FILM)
             n.contains("music") || n.contains("song") -> st("#C03BFF", "#9B00E8", G.NOTE)
             n.contains("bluetooth") -> st("#2979FF", "#1565C0", G.SHARE)
