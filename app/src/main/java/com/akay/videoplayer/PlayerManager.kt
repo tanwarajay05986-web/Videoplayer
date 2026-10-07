@@ -12,9 +12,12 @@ import android.graphics.Bitmap
 import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
@@ -26,6 +29,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerNotificationManager
 import java.io.File
 
@@ -34,6 +38,7 @@ object PlayerManager {
     private val main = Handler(Looper.getMainLooper())
 
     var player: ExoPlayer? = null
+    var session: MediaSession? = null
     var queue: MutableList<MediaFile> = ArrayList()
     var backgroundMode = false
     var softDecoder = false
@@ -44,6 +49,11 @@ object PlayerManager {
     var eq: Equalizer? = null
     var loud: LoudnessEnhancer? = null
     var boostGain = 0
+
+    // bluetooth / headset button state
+    private var hookClicks = 0
+    private var hookDownAt = 0L
+    private var hookLong = false
 
     fun init(c: Context) {
         app = c.applicationContext
@@ -116,6 +126,111 @@ object PlayerManager {
         return p
     }
 
+    // ---------- media session (headset / bluetooth buttons) ----------
+
+    private fun goNext(p: ExoPlayer) {
+        if (p.hasNextMediaItem()) p.seekToNextMediaItem()
+    }
+
+    private fun goPrev(p: ExoPlayer) {
+        if (p.hasPreviousMediaItem()) p.seekToPreviousMediaItem() else p.seekTo(0L)
+    }
+
+    private val hookRun = Runnable {
+        val c = hookClicks
+        hookClicks = 0
+        val p = player ?: return@Runnable
+        when {
+            c == 1 -> {
+                if (p.playWhenReady && p.playbackState != Player.STATE_ENDED) {
+                    p.pause()
+                } else {
+                    if (p.playbackState == Player.STATE_ENDED) p.seekTo(0L)
+                    p.play()
+                }
+            }
+            c == 2 -> goNext(p)
+            c >= 3 -> goPrev(p)
+        }
+    }
+
+    // single press = play/pause, double = next, triple = previous, long press = next
+    private fun handleHook(ke: KeyEvent): Boolean {
+        val p = player ?: return false
+        if (ke.action == KeyEvent.ACTION_DOWN) {
+            if (ke.repeatCount == 0 && !ke.isLongPress) {
+                hookDownAt = SystemClock.uptimeMillis()
+                hookLong = false
+            } else if (!hookLong) {
+                hookLong = true
+                main.removeCallbacks(hookRun)
+                hookClicks = 0
+                goNext(p)
+            }
+        } else if (ke.action == KeyEvent.ACTION_UP) {
+            if (hookLong) {
+                hookLong = false
+            } else if (SystemClock.uptimeMillis() - hookDownAt >= 650L) {
+                main.removeCallbacks(hookRun)
+                hookClicks = 0
+                goNext(p)
+            } else {
+                hookClicks++
+                main.removeCallbacks(hookRun)
+                main.postDelayed(hookRun, 300L)
+            }
+        }
+        return true
+    }
+
+    private val sessionCallback = object : MediaSession.Callback {
+        @Suppress("DEPRECATION")
+        override fun onMediaButtonEvent(
+            session: MediaSession,
+            controllerInfo: MediaSession.ControllerInfo,
+            intent: Intent
+        ): Boolean {
+            val ke: KeyEvent? = if (Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+            } else {
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+            }
+            if (ke == null) return false
+            val code = ke.keyCode
+            if (code == KeyEvent.KEYCODE_HEADSETHOOK || code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+                return handleHook(ke)
+            }
+            return false
+        }
+    }
+
+    private fun buildSession(p: ExoPlayer) {
+        try {
+            session?.release()
+        } catch (e: Throwable) {
+        }
+        session = try {
+            MediaSession.Builder(app, p)
+                .setId("vp_" + System.currentTimeMillis())
+                .setCallback(sessionCallback)
+                .build()
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    private fun releaseSession() {
+        main.removeCallbacks(hookRun)
+        hookClicks = 0
+        try {
+            session?.release()
+        } catch (e: Throwable) {
+        }
+        session = null
+    }
+
+    // ---------- audio effects ----------
+
     private fun setupEffects(id: Int) {
         try {
             eq?.release()
@@ -166,6 +281,7 @@ object PlayerManager {
         if (p == null) {
             p = buildPlayer()
             player = p
+            buildSession(p)
         }
         return p
     }
@@ -219,6 +335,7 @@ object PlayerManager {
         val pw = old.playWhenReady
         val speed = old.playbackParameters.speed
         old.removeListener(listener)
+        releaseSession()
         old.release()
         player = null
         start(queue, idx, pos, pw)
@@ -291,6 +408,7 @@ object PlayerManager {
         }
         eq = null
         loud = null
+        releaseSession()
         player?.removeListener(listener)
         player?.release()
         player = null
