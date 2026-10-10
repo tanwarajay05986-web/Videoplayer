@@ -37,6 +37,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -132,6 +133,60 @@ class ArrowView(ctx: Context) : View(ctx) {
     }
 }
 
+// sound-wave icon (Audio Effect)
+class WaveGlyph(ctx: Context) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    init {
+        p.color = Color.WHITE
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+    }
+
+    override fun onDraw(c: Canvas) {
+        val s = minOf(width, height).toFloat()
+        val ox = (width - s) / 2f
+        val oy = (height - s) / 2f
+        p.strokeWidth = 0.075f * s
+        val hs = floatArrayOf(0.22f, 0.42f, 0.7f, 0.5f, 0.62f, 0.34f, 0.2f)
+        for (i in hs.indices) {
+            val x = ox + (0.16f + i * 0.113f) * s
+            val half = hs[i] * s / 2f
+            c.drawLine(x, oy + s / 2f - half, x, oy + s / 2f + half, p)
+        }
+    }
+}
+
+// moon icon (Night Mode)
+class MoonGlyph(ctx: Context) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var col = Color.WHITE
+
+    init {
+        p.style = Paint.Style.FILL
+    }
+
+    fun tint(c: Int) {
+        col = c
+        invalidate()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val s = minOf(width, height).toFloat()
+        val ox = (width - s) / 2f
+        val oy = (height - s) / 2f
+        p.color = col
+        val a = Path()
+        a.addCircle(ox + 0.46f * s, oy + 0.54f * s, 0.30f * s, Path.Direction.CW)
+        val b = Path()
+        b.addCircle(ox + 0.62f * s, oy + 0.42f * s, 0.26f * s, Path.Direction.CW)
+        a.op(b, Path.Op.DIFFERENCE)
+        c.drawPath(a, p)
+        c.drawCircle(ox + 0.74f * s, oy + 0.68f * s, 0.05f * s, p)
+        c.drawCircle(ox + 0.60f * s, oy + 0.22f * s, 0.04f * s, p)
+    }
+}
+
 class PlayerActivity : ComponentActivity() {
 
     private val GREEN = Color.parseColor("#14B800")
@@ -150,6 +205,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var artBox: LinearLayout
     private lateinit var artImg: ImageView
     private lateinit var artTitle: TextView
+    private lateinit var nightOv: View
     private lateinit var gest: GestureLayer
     private lateinit var hud: TextView
     private lateinit var brightHud: StripHud
@@ -161,10 +217,11 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var durT: TextView
     private lateinit var playGlyph: GlyphView
     private lateinit var rotGlyph: GlyphView
-    private lateinit var muteGlyph: GlyphView
     private lateinit var speedChip: TextView
+    private lateinit var compactRow: LinearLayout
+    private lateinit var exScroll: HorizontalScrollView
+    private lateinit var exRow: LinearLayout
     private lateinit var centerG: LinearLayout
-    private lateinit var shotBtn: View
     private lateinit var abLabel: TextView
     private lateinit var unlockBtn: View
     private lateinit var btnBack10: View
@@ -188,6 +245,24 @@ class PlayerActivity : ComponentActivity() {
     private val cellIcons = HashMap<String, GlyphView>()
     private val repeatBtns = ArrayList<FrameLayout>()
     private var transformer: Transformer? = null
+
+    // expanded (arrow) row
+    private val exIcons = HashMap<String, GlyphView>()
+    private var exMoon: MoonGlyph? = null
+    private var expSpeed: TextView? = null
+    private var shotCompact: View? = null
+    private var shotEx: View? = null
+    private var nightOn = false
+    private val exOrder = listOf(
+        "night", "custom", "shuffle", "loop", "mute", "timer", "ab",
+        "effect", "eq", "speed", "shot", "bg", "rot"
+    )
+    private val exLabels = mapOf(
+        "night" to "Night Mode", "custom" to "Customise Items", "shuffle" to "Shuffle",
+        "loop" to "Loop", "mute" to "Mute", "timer" to "Sleep Timer", "ab" to "A - B Repeat",
+        "effect" to "Audio Effect", "eq" to "Equalizer", "speed" to "Speed",
+        "shot" to "Screenshot", "bg" to "Background Play", "rot" to "Screen Rotation"
+    )
 
     private var locked = false
     private var rotLocked = false
@@ -244,12 +319,6 @@ class PlayerActivity : ComponentActivity() {
     private fun lpm(w: Int, h: Int, left: Int): LinearLayout.LayoutParams {
         val l = lp(w, h)
         l.leftMargin = left
-        return l
-    }
-
-    private fun lpt(w: Int, h: Int, top: Int): LinearLayout.LayoutParams {
-        val l = lp(w, h)
-        l.topMargin = top
         return l
     }
 
@@ -318,6 +387,12 @@ class PlayerActivity : ComponentActivity() {
 
     private fun speedText(s: Float): String =
         (if (s == s.toInt().toFloat()) s.toInt().toString() else s.toString()) + "X"
+
+    private fun updateSpeedLabels(s: Float) {
+        val t = speedText(s)
+        speedChip.text = t
+        expSpeed?.text = t
+    }
 
     // ---------- lifecycle ----------
 
@@ -485,7 +560,8 @@ class PlayerActivity : ComponentActivity() {
         pl.addListener(listener)
         syncUi()
         updatePlayIcon()
-        speedChip.text = speedText(pl.playbackParameters.speed)
+        updateSpeedLabels(pl.playbackParameters.speed)
+        refreshExIcons()
     }
 
     private fun updatePlayIcon() {
@@ -517,6 +593,7 @@ class PlayerActivity : ComponentActivity() {
         PlayerManager.abB = -1L
         abLabel.visibility = View.GONE
         cellIcons["ab"]?.tint(Color.WHITE)
+        refreshExIcons()
     }
 
     private val ticker = object : Runnable {
@@ -732,6 +809,12 @@ class PlayerActivity : ComponentActivity() {
         artBox.addView(artTitle, lp(MATCH, WRAP))
         root.addView(artBox, FrameLayout.LayoutParams(MATCH, MATCH, Gravity.CENTER))
 
+        // night mode: warm dark layer over the picture (below the touch layer and the controls)
+        nightOv = View(this)
+        nightOv.setBackgroundColor(Color.parseColor("#66401A00"))
+        nightOv.visibility = View.GONE
+        root.addView(nightOv, FrameLayout.LayoutParams(MATCH, MATCH))
+
         gest = GestureLayer(this)
         setupGestures()
         root.addView(gest, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -777,6 +860,180 @@ class PlayerActivity : ComponentActivity() {
         root.addView(unlockBtn, ul)
     }
 
+    // small row under the title bar (equalizer, 1X, screenshot, headphone, rotate, arrow)
+    private fun buildCompact() {
+        compactRow = LinearLayout(this)
+        compactRow.orientation = LinearLayout.HORIZONTAL
+        compactRow.gravity = Gravity.CENTER_VERTICAL
+        compactRow.addView(ring(G.EQ, 40) { eqDialog() }, lp(dp(40), dp(40)))
+
+        val speedRing = FrameLayout(this)
+        speedRing.background = oval(RINGBG)
+        speedChip = TextView(this)
+        speedChip.text = "1X"
+        speedChip.textSize = 14f
+        speedChip.setTypeface(null, Typeface.BOLD)
+        speedChip.setTextColor(Color.WHITE)
+        speedChip.gravity = Gravity.CENTER
+        speedRing.addView(speedChip, FrameLayout.LayoutParams(MATCH, MATCH))
+        speedRing.setOnClickListener {
+            speedDialog()
+            showControls()
+        }
+        compactRow.addView(speedRing, lpm(dp(40), dp(40), dp(12)))
+
+        val shot = ring(G.CAMERA, 40) { takeShot() }
+        shotCompact = shot
+        compactRow.addView(shot, lpm(dp(40), dp(40), dp(12)))
+        compactRow.addView(ring(G.HEADPHONE, 40) { goBackground() }, lpm(dp(40), dp(40), dp(12)))
+        compactRow.addView(ring(G.ROTATE, 40) { manualRotate() }, lpm(dp(40), dp(40), dp(12)))
+        compactRow.addView(ring(G.CHEVRON, 32) { showExpanded(true) }, lpm(dp(32), dp(32), dp(12)))
+    }
+
+    private fun exItem(label: String, icon: View, lpi: FrameLayout.LayoutParams, act: () -> Unit): View {
+        val c = LinearLayout(this)
+        c.orientation = LinearLayout.VERTICAL
+        c.gravity = Gravity.CENTER_HORIZONTAL
+        val r = FrameLayout(this)
+        r.background = oval(RINGBG)
+        r.addView(icon, lpi)
+        c.addView(r, lp(dp(40), dp(40)))
+        val t = TextView(this)
+        t.text = label
+        t.textSize = 12f
+        t.setTextColor(Color.WHITE)
+        t.gravity = Gravity.CENTER
+        t.maxLines = 2
+        t.setPadding(0, dp(4), 0, 0)
+        c.addView(t, lp(MATCH, WRAP))
+        c.setOnClickListener {
+            act()
+            showControls()
+        }
+        return c
+    }
+
+    // big row that opens when the arrow is tapped (round buttons with names below)
+    private fun buildExpanded() {
+        exRow.removeAllViews()
+        exIcons.clear()
+        exMoon = null
+        shotEx = null
+        expSpeed = null
+        val hidden = Prefs.getSet("qhide")
+        fun gl(kind: Int, k: String): GlyphView {
+            val g = GlyphView(this, kind)
+            exIcons[k] = g
+            return g
+        }
+        for (key in exOrder) {
+            if (key != "custom" && hidden.contains(key)) continue
+            val icon: View
+            val act: () -> Unit
+            var lpi = FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER)
+            when (key) {
+                "night" -> {
+                    val m = MoonGlyph(this)
+                    exMoon = m
+                    icon = m
+                    act = { toggleNight() }
+                }
+                "custom" -> {
+                    icon = GlyphView(this, G.PENCIL)
+                    act = { customiseDialog() }
+                }
+                "shuffle" -> {
+                    icon = gl(G.SHUFFLE, key)
+                    act = { toggleShuffle() }
+                }
+                "loop" -> {
+                    icon = gl(G.LOOP, key)
+                    act = { cycleLoop() }
+                }
+                "mute" -> {
+                    icon = gl(G.MUTE, key)
+                    act = { toggleMute() }
+                }
+                "timer" -> {
+                    icon = GlyphView(this, G.ALARM)
+                    act = { timerDialog() }
+                }
+                "ab" -> {
+                    icon = gl(G.AB, key)
+                    act = { abRepeat() }
+                }
+                "effect" -> {
+                    icon = WaveGlyph(this)
+                    act = { audioEffectDialog() }
+                }
+                "eq" -> {
+                    icon = GlyphView(this, G.EQ)
+                    act = { eqDialog() }
+                }
+                "speed" -> {
+                    val tv = TextView(this)
+                    tv.text = speedText(p?.playbackParameters?.speed ?: 1f)
+                    tv.textSize = 14f
+                    tv.setTypeface(null, Typeface.BOLD)
+                    tv.setTextColor(Color.WHITE)
+                    tv.gravity = Gravity.CENTER
+                    expSpeed = tv
+                    icon = tv
+                    lpi = FrameLayout.LayoutParams(MATCH, MATCH)
+                    act = { speedDialog() }
+                }
+                "shot" -> {
+                    icon = GlyphView(this, G.CAMERA)
+                    act = { takeShot() }
+                }
+                "bg" -> {
+                    icon = GlyphView(this, G.HEADPHONE)
+                    act = { goBackground() }
+                }
+                else -> {
+                    icon = GlyphView(this, G.ROTATE)
+                    act = { manualRotate() }
+                }
+            }
+            val item = exItem(exLabels[key] ?: key, icon, lpi, act)
+            if (key == "shot") shotEx = item
+            exRow.addView(item, lp(dp(64), WRAP))
+        }
+        val back = ring(G.CHEVRON, 32) { showExpanded(false) }
+        glyphOf(back).rotation = 180f
+        val bl = lp(dp(32), dp(32))
+        bl.topMargin = dp(4)
+        bl.leftMargin = dp(8)
+        exRow.addView(back, bl)
+        applyShotVis()
+        refreshExIcons()
+    }
+
+    private fun applyShotVis() {
+        val v = if (showShot) View.VISIBLE else View.GONE
+        shotCompact?.visibility = v
+        shotEx?.visibility = v
+    }
+
+    private fun showExpanded(on: Boolean) {
+        compactRow.visibility = if (on) View.GONE else View.VISIBLE
+        exScroll.visibility = if (on) View.VISIBLE else View.GONE
+        if (on) {
+            refreshExIcons()
+            exScroll.scrollTo(0, 0)
+        }
+    }
+
+    private fun refreshExIcons() {
+        val pl = p
+        val k = PlayerManager.repeatKind
+        exMoon?.tint(if (nightOn) GREEN else Color.WHITE)
+        exIcons["shuffle"]?.tint(if (k == 2) GREEN else Color.WHITE)
+        exIcons["loop"]?.tint(if (k == 1 || k == 3) GREEN else Color.WHITE)
+        exIcons["mute"]?.tint(if (pl != null && pl.volume == 0f) GREEN else Color.WHITE)
+        exIcons["ab"]?.tint(if (PlayerManager.abA >= 0) GREEN else Color.WHITE)
+    }
+
     private fun buildControls() {
         controls = FrameLayout(this)
 
@@ -803,39 +1060,23 @@ class PlayerActivity : ComponentActivity() {
         bar.addView(plain(G.NOTE) { audioTrackDialog() }, lpm(dp(30), dp(30), dp(12)))
         bar.addView(plain(G.MORE_V) { showPanel() }, lpm(dp(30), dp(30), dp(8)))
         top.addView(bar, lp(MATCH, WRAP))
+
+        // row under the title: small row, and the big labelled row that opens with the arrow
+        buildCompact()
+        exScroll = HorizontalScrollView(this)
+        exScroll.isHorizontalScrollBarEnabled = false
+        exRow = LinearLayout(this)
+        exRow.orientation = LinearLayout.HORIZONTAL
+        exScroll.addView(exRow)
+        exScroll.visibility = View.GONE
+        val qHold = FrameLayout(this)
+        qHold.addView(compactRow, FrameLayout.LayoutParams(WRAP, WRAP))
+        qHold.addView(exScroll, FrameLayout.LayoutParams(MATCH, WRAP))
+        buildExpanded()
+        val qlp = lp(MATCH, WRAP)
+        qlp.topMargin = dp(12)
+        top.addView(qHold, qlp)
         controls.addView(top, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP))
-
-        // left side: mute, background play, speed (stacked, one under the other)
-        val leftCol = LinearLayout(this)
-        leftCol.orientation = LinearLayout.VERTICAL
-        val muteRing = ring(G.VOLUME, 40) { toggleMute() }
-        muteGlyph = glyphOf(muteRing)
-        leftCol.addView(muteRing, lp(dp(40), dp(40)))
-        leftCol.addView(ring(G.HEADPHONE, 40) { goBackground() }, lpt(dp(40), dp(40), dp(12)))
-        val speedRing = FrameLayout(this)
-        speedRing.background = oval(RINGBG)
-        speedChip = TextView(this)
-        speedChip.text = "1X"
-        speedChip.textSize = 14f
-        speedChip.setTypeface(null, Typeface.BOLD)
-        speedChip.setTextColor(Color.WHITE)
-        speedChip.gravity = Gravity.CENTER
-        speedRing.addView(speedChip, FrameLayout.LayoutParams(MATCH, MATCH))
-        speedRing.setOnClickListener {
-            speedDialog()
-            showControls()
-        }
-        leftCol.addView(speedRing, lpt(dp(40), dp(40), dp(12)))
-        val lcl = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.START or Gravity.CENTER_VERTICAL)
-        lcl.leftMargin = dp(16)
-        controls.addView(leftCol, lcl)
-
-        // right side: screenshot
-        shotBtn = ring(G.CAMERA, 40) { takeShot() }
-        shotBtn.visibility = if (showShot) View.VISIBLE else View.GONE
-        val scl = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or Gravity.CENTER_VERTICAL)
-        scl.rightMargin = dp(16)
-        controls.addView(shotBtn, scl)
 
         val bottom = LinearLayout(this)
         bottom.orientation = LinearLayout.VERTICAL
@@ -1110,7 +1351,106 @@ class PlayerActivity : ComponentActivity() {
         val pl = p ?: return
         val mute = pl.volume > 0f
         pl.volume = if (mute) 0f else 1f
-        muteGlyph.setShape(if (mute) G.MUTE else G.VOLUME)
+        refreshExIcons()
+        toast(if (mute) "Muted" else "Sound on")
+    }
+
+    private fun toggleNight() {
+        nightOn = !nightOn
+        nightOv.visibility = if (nightOn) View.VISIBLE else View.GONE
+        refreshExIcons()
+        toast(if (nightOn) "Night mode on" else "Night mode off")
+    }
+
+    private fun setRepeatKind(k: Int) {
+        PlayerManager.repeatKind = k
+        PlayerManager.applyRepeat()
+        Prefs.putInt("repeat", k)
+        updateRepeatUi()
+        refreshExIcons()
+    }
+
+    private fun toggleShuffle() {
+        if (PlayerManager.repeatKind == 2) {
+            setRepeatKind(0)
+            toast("Shuffle off")
+        } else {
+            setRepeatKind(2)
+            toast("Shuffle on")
+        }
+    }
+
+    private fun cycleLoop() {
+        when (PlayerManager.repeatKind) {
+            3 -> {
+                setRepeatKind(1)
+                toast("Repeat One")
+            }
+            1 -> {
+                setRepeatKind(0)
+                toast("Loop off")
+            }
+            else -> {
+                setRepeatKind(3)
+                toast("Loop All")
+            }
+        }
+    }
+
+    private fun customiseDialog() {
+        val keys = exOrder.filter { it != "custom" }
+        val labels = keys.map { exLabels[it] ?: it }.toTypedArray()
+        val hidden = Prefs.getSet("qhide")
+        val checked = BooleanArray(keys.size) { !hidden.contains(keys[it]) }
+        val dlg = AlertDialog.Builder(this).setTitle("Customise Items")
+            .setMultiChoiceItems(labels, checked) { _, i, c -> checked[i] = c }
+            .setPositiveButton("Done") { _, _ ->
+                val h = HashSet<String>()
+                for (i in keys.indices) if (!checked[i]) h.add(keys[i])
+                Prefs.putSet("qhide", h)
+                buildExpanded()
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        dlg.show()
+        dlg.tintButtons(GREEN)
+    }
+
+    private fun audioEffectDialog() {
+        val names = arrayOf("Normal", "Bass boost", "Treble boost", "Vocal", "Loud (volume boost)")
+        AlertDialog.Builder(this).setTitle("Audio Effect").setItems(names) { _, w -> applyEffect(w) }.show()
+    }
+
+    private fun applyEffect(w: Int) {
+        val e = PlayerManager.eq
+        if (e == null) {
+            toast("Audio effect is not available right now")
+            return
+        }
+        try {
+            val range = e.bandLevelRange
+            val lo = range[0].toInt()
+            val hi = range[1].toInt()
+            val n = e.numberOfBands.toInt()
+            val parts = ArrayList<String>()
+            for (i in 0 until n) {
+                var lv = 0
+                when (w) {
+                    1 -> if (i < 2) lv = hi * 6 / 10
+                    2 -> if (i >= n - 2) lv = hi * 6 / 10
+                    3 -> lv = if (i == 0 || i == n - 1) lo / 3 else hi / 2
+                    else -> lv = 0
+                }
+                lv = lv.coerceIn(lo, hi)
+                e.setBandLevel(i.toShort(), lv.toShort())
+                parts.add(lv.toString())
+            }
+            Prefs.putString("eq", parts.joinToString(","))
+            if (w == 4) PlayerManager.setBoost(600)
+            toast("Audio effect: " + arrayOf("Normal", "Bass boost", "Treble boost", "Vocal", "Loud")[w])
+        } catch (t: Throwable) {
+            toast("Audio effect is not available right now")
+        }
     }
 
     // top-bar button: lock / unlock automatic rotation
@@ -1127,7 +1467,7 @@ class PlayerActivity : ComponentActivity() {
         toast(if (rotLocked) "Auto-rotation locked" else "Auto-rotation on")
     }
 
-    // panel button: turn the screen by hand (works even when rotation is locked)
+    // turn the screen by hand (works even when rotation is locked)
     private fun manualRotate() {
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         wantLand = !land
@@ -1164,7 +1504,7 @@ class PlayerActivity : ComponentActivity() {
         val names = speeds.map { speedText(it) + if (Math.abs(it - c) < 0.01f) "  \u2713" else "" }.toTypedArray()
         AlertDialog.Builder(this).setTitle("Playback speed").setItems(names) { _, w ->
             pl.setPlaybackSpeed(speeds[w])
-            speedChip.text = speedText(speeds[w])
+            updateSpeedLabels(speeds[w])
         }.show()
     }
 
@@ -1331,12 +1671,7 @@ class PlayerActivity : ComponentActivity() {
             val g = GlyphView(this, kinds[i])
             if (i == 4) g.slashOn(true)
             b.addView(g, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
-            b.setOnClickListener {
-                PlayerManager.repeatKind = i
-                PlayerManager.applyRepeat()
-                Prefs.putInt("repeat", i)
-                updateRepeatUi()
-            }
+            b.setOnClickListener { setRepeatKind(i) }
             repeatBtns.add(b)
             seg.addView(b, lp(0, dp(64), 1f))
         }
@@ -1415,7 +1750,7 @@ class PlayerActivity : ComponentActivity() {
         sr.setOnClickListener {
             showShot = !showShot
             shotDot.visibility = if (showShot) View.VISIBLE else View.INVISIBLE
-            shotBtn.visibility = if (showShot) View.VISIBLE else View.GONE
+            applyShotVis()
             toast(if (showShot) "Screenshot button shown on the player" else "Screenshot button hidden")
         }
         sr.setPadding(0, dp(6), 0, dp(18))
@@ -1706,6 +2041,7 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         cellIcons["ab"]?.tint(GREEN)
+        refreshExIcons()
     }
 
     private fun eqDialog() {
