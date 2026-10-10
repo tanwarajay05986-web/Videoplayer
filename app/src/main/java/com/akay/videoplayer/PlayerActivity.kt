@@ -372,6 +372,19 @@ class PlayerActivity : ComponentActivity() {
         return f
     }
 
+    // same round button, but with a bigger icon inside (used for the rows under the title)
+    private fun ringBig(glyph: Int, sizeDp: Int, onClick: () -> Unit): FrameLayout {
+        val f = FrameLayout(this)
+        f.background = oval(RINGBG)
+        val g = dp(sizeDp * 85 / 100)
+        f.addView(GlyphView(this, glyph), FrameLayout.LayoutParams(g, g, Gravity.CENTER))
+        f.setOnClickListener {
+            onClick()
+            showControls()
+        }
+        return f
+    }
+
     private fun glyphOf(v: FrameLayout): GlyphView = v.getChildAt(0) as GlyphView
 
     private fun plain(glyph: Int, onClick: () -> Unit): GlyphView {
@@ -865,13 +878,13 @@ class PlayerActivity : ComponentActivity() {
         compactRow = LinearLayout(this)
         compactRow.orientation = LinearLayout.HORIZONTAL
         compactRow.gravity = Gravity.CENTER_VERTICAL
-        compactRow.addView(ring(G.EQ, 40) { eqDialog() }, lp(dp(40), dp(40)))
+        compactRow.addView(ringBig(G.EQ, 40) { eqDialog() }, lp(dp(40), dp(40)))
 
         val speedRing = FrameLayout(this)
         speedRing.background = oval(RINGBG)
         speedChip = TextView(this)
         speedChip.text = "1X"
-        speedChip.textSize = 14f
+        speedChip.textSize = 17f
         speedChip.setTypeface(null, Typeface.BOLD)
         speedChip.setTextColor(Color.WHITE)
         speedChip.gravity = Gravity.CENTER
@@ -882,12 +895,12 @@ class PlayerActivity : ComponentActivity() {
         }
         compactRow.addView(speedRing, lpm(dp(40), dp(40), dp(12)))
 
-        val shot = ring(G.CAMERA, 40) { takeShot() }
+        val shot = ringBig(G.CAMERA, 40) { takeShot() }
         shotCompact = shot
         compactRow.addView(shot, lpm(dp(40), dp(40), dp(12)))
-        compactRow.addView(ring(G.HEADPHONE, 40) { goBackground() }, lpm(dp(40), dp(40), dp(12)))
-        compactRow.addView(ring(G.ROTATE, 40) { manualRotate() }, lpm(dp(40), dp(40), dp(12)))
-        compactRow.addView(ring(G.CHEVRON, 32) { showExpanded(true) }, lpm(dp(32), dp(32), dp(12)))
+        compactRow.addView(ringBig(G.HEADPHONE, 40) { goBackground() }, lpm(dp(40), dp(40), dp(12)))
+        compactRow.addView(ringBig(G.ROTATE, 40) { manualRotate() }, lpm(dp(40), dp(40), dp(12)))
+        compactRow.addView(ringBig(G.CHEVRON, 34) { showExpanded(true) }, lpm(dp(34), dp(34), dp(12)))
     }
 
     private fun exItem(label: String, icon: View, lpi: FrameLayout.LayoutParams, act: () -> Unit): View {
@@ -930,7 +943,7 @@ class PlayerActivity : ComponentActivity() {
             if (key != "custom" && hidden.contains(key)) continue
             val icon: View
             val act: () -> Unit
-            var lpi = FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER)
+            var lpi = FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER)
             when (key) {
                 "night" -> {
                     val m = MoonGlyph(this)
@@ -973,7 +986,7 @@ class PlayerActivity : ComponentActivity() {
                 "speed" -> {
                     val tv = TextView(this)
                     tv.text = speedText(p?.playbackParameters?.speed ?: 1f)
-                    tv.textSize = 14f
+                    tv.textSize = 17f
                     tv.setTypeface(null, Typeface.BOLD)
                     tv.setTextColor(Color.WHITE)
                     tv.gravity = Gravity.CENTER
@@ -997,12 +1010,12 @@ class PlayerActivity : ComponentActivity() {
             }
             val item = exItem(exLabels[key] ?: key, icon, lpi, act)
             if (key == "shot") shotEx = item
-            exRow.addView(item, lp(dp(64), WRAP))
+            exRow.addView(item, lp(dp(76), WRAP))
         }
-        val back = ring(G.CHEVRON, 32) { showExpanded(false) }
+        val back = ringBig(G.CHEVRON, 34) { showExpanded(false) }
         glyphOf(back).rotation = 180f
-        val bl = lp(dp(32), dp(32))
-        bl.topMargin = dp(4)
+        val bl = lp(dp(34), dp(34))
+        bl.topMargin = dp(3)
         bl.leftMargin = dp(8)
         exRow.addView(back, bl)
         applyShotVis()
@@ -1040,7 +1053,7 @@ class PlayerActivity : ComponentActivity() {
         val top = LinearLayout(this)
         top.orientation = LinearLayout.VERTICAL
         top.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.parseColor("#AA000000"), Color.TRANSPARENT))
-        top.setPadding(dp(20), dp(36), dp(20), dp(28))
+        top.setPadding(dp(20), dp(48), dp(20), dp(28))
 
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
@@ -1049,16 +1062,22 @@ class PlayerActivity : ComponentActivity() {
         back.setOnClickListener { finish() }
         bar.addView(back, lp(dp(30), dp(30)))
         titleTv = TextView(this)
-        titleTv.textSize = 16f
+        titleTv.textSize = 17f
         titleTv.setTextColor(Color.WHITE)
-        titleTv.maxLines = 1
+        titleTv.maxLines = 2
         titleTv.ellipsize = android.text.TextUtils.TruncateAt.END
-        titleTv.setPadding(dp(14), 0, dp(8), 0)
+        titleTv.setPadding(dp(14), 0, dp(22), 0)
         bar.addView(titleTv, lp(0, WRAP, 1f))
         rotGlyph = plain(G.ROTATE) { toggleRotLock() }
         bar.addView(rotGlyph, lp(dp(30), dp(30)))
-        bar.addView(plain(G.NOTE) { audioTrackDialog() }, lpm(dp(30), dp(30), dp(12)))
-        bar.addView(plain(G.MORE_V) { showPanel() }, lpm(dp(30), dp(30), dp(8)))
+        bar.addView(plain(G.NOTE) { audioTrackDialog() }, lpm(dp(30), dp(30), dp(18)))
+        val wave = WaveGlyph(this)
+        wave.setOnClickListener {
+            audioEffectDialog()
+            showControls()
+        }
+        bar.addView(wave, lpm(dp(30), dp(30), dp(18)))
+        bar.addView(plain(G.MORE_V) { showPanel() }, lpm(dp(30), dp(30), dp(18)))
         top.addView(bar, lp(MATCH, WRAP))
 
         // row under the title: small row, and the big labelled row that opens with the arrow
