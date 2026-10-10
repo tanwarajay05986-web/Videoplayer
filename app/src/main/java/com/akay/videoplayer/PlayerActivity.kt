@@ -37,7 +37,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -163,9 +162,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var playGlyph: GlyphView
     private lateinit var rotGlyph: GlyphView
     private lateinit var muteGlyph: GlyphView
-    private lateinit var chevGlyph: GlyphView
     private lateinit var speedChip: TextView
-    private lateinit var extraRow: LinearLayout
     private lateinit var centerG: LinearLayout
     private lateinit var shotBtn: View
     private lateinit var abLabel: TextView
@@ -195,7 +192,7 @@ class PlayerActivity : ComponentActivity() {
     private var locked = false
     private var rotLocked = false
     private var seeking = false
-    private var showShot = false
+    private var showShot = true
     private var cfBright = 0
     private var cfContrast = 100
     private var cfSat = 100
@@ -247,6 +244,12 @@ class PlayerActivity : ComponentActivity() {
     private fun lpm(w: Int, h: Int, left: Int): LinearLayout.LayoutParams {
         val l = lp(w, h)
         l.leftMargin = left
+        return l
+    }
+
+    private fun lpt(w: Int, h: Int, top: Int): LinearLayout.LayoutParams {
+        val l = lp(w, h)
+        l.topMargin = top
         return l
     }
 
@@ -800,16 +803,15 @@ class PlayerActivity : ComponentActivity() {
         bar.addView(plain(G.NOTE) { audioTrackDialog() }, lpm(dp(30), dp(30), dp(12)))
         bar.addView(plain(G.MORE_V) { showPanel() }, lpm(dp(30), dp(30), dp(8)))
         top.addView(bar, lp(MATCH, WRAP))
+        controls.addView(top, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP))
 
-        // quick row: the extra buttons live inside the arrow and open to its right
-        val quick = LinearLayout(this)
-        quick.orientation = LinearLayout.HORIZONTAL
-        quick.gravity = Gravity.CENTER_VERTICAL
-        quick.addView(ring(G.ROTATE, 40) { manualRotate() }, lp(dp(40), dp(40)))
+        // left side: mute, background play, speed (stacked, one under the other)
+        val leftCol = LinearLayout(this)
+        leftCol.orientation = LinearLayout.VERTICAL
         val muteRing = ring(G.VOLUME, 40) { toggleMute() }
         muteGlyph = glyphOf(muteRing)
-        quick.addView(muteRing, lpm(dp(40), dp(40), dp(12)))
-        quick.addView(ring(G.HEADPHONE, 40) { goBackground() }, lpm(dp(40), dp(40), dp(12)))
+        leftCol.addView(muteRing, lp(dp(40), dp(40)))
+        leftCol.addView(ring(G.HEADPHONE, 40) { goBackground() }, lpt(dp(40), dp(40), dp(12)))
         val speedRing = FrameLayout(this)
         speedRing.background = oval(RINGBG)
         speedChip = TextView(this)
@@ -823,30 +825,17 @@ class PlayerActivity : ComponentActivity() {
             speedDialog()
             showControls()
         }
-        quick.addView(speedRing, lpm(dp(40), dp(40), dp(12)))
-        val chevRing = ring(G.CHEVRON, 32) { toggleExtra() }
-        chevGlyph = glyphOf(chevRing)
-        quick.addView(chevRing, lpm(dp(32), dp(32), dp(12)))
+        leftCol.addView(speedRing, lpt(dp(40), dp(40), dp(12)))
+        val lcl = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.START or Gravity.CENTER_VERTICAL)
+        lcl.leftMargin = dp(16)
+        controls.addView(leftCol, lcl)
 
-        extraRow = LinearLayout(this)
-        extraRow.orientation = LinearLayout.HORIZONTAL
-        extraRow.gravity = Gravity.CENTER_VERTICAL
-        extraRow.visibility = View.GONE
-        shotBtn = ring(G.CAMERA, 36) { takeShot() }
-        shotBtn.visibility = View.GONE
-        extraRow.addView(shotBtn, lpm(dp(36), dp(36), dp(10)))
-        extraRow.addView(ring(G.AB, 36) { abRepeat() }, lpm(dp(36), dp(36), dp(10)))
-        extraRow.addView(ring(G.BOOKMARK, 36) { addBookmark() }, lpm(dp(36), dp(36), dp(10)))
-        extraRow.addView(ring(G.PIP, 36) { enterPip() }, lpm(dp(36), dp(36), dp(10)))
-        quick.addView(extraRow, lp(WRAP, WRAP))
-
-        val qs = HorizontalScrollView(this)
-        qs.isHorizontalScrollBarEnabled = false
-        qs.addView(quick)
-        val qlp = lp(MATCH, WRAP)
-        qlp.topMargin = dp(12)
-        top.addView(qs, qlp)
-        controls.addView(top, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP))
+        // right side: screenshot
+        shotBtn = ring(G.CAMERA, 40) { takeShot() }
+        shotBtn.visibility = if (showShot) View.VISIBLE else View.GONE
+        val scl = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or Gravity.CENTER_VERTICAL)
+        scl.rightMargin = dp(16)
+        controls.addView(shotBtn, scl)
 
         val bottom = LinearLayout(this)
         bottom.orientation = LinearLayout.VERTICAL
@@ -1138,7 +1127,7 @@ class PlayerActivity : ComponentActivity() {
         toast(if (rotLocked) "Auto-rotation locked" else "Auto-rotation on")
     }
 
-    // quick-row button: turn the screen by hand (works even when rotation is locked)
+    // panel button: turn the screen by hand (works even when rotation is locked)
     private fun manualRotate() {
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         wantLand = !land
@@ -1167,12 +1156,6 @@ class PlayerActivity : ComponentActivity() {
         resizeIdx = (resizeIdx + 1) % resizeModes.size
         arFrame.resizeMode = resizeModes[resizeIdx]
         toast(resizeNames[resizeIdx])
-    }
-
-    private fun toggleExtra() {
-        val show = extraRow.visibility != View.VISIBLE
-        extraRow.visibility = if (show) View.VISIBLE else View.GONE
-        chevGlyph.rotation = if (show) 180f else 0f
     }
 
     private fun speedDialog() {
@@ -1325,7 +1308,8 @@ class PlayerActivity : ComponentActivity() {
         col.addView(gridRow(listOf(
             cell("ab", G.AB, "AB Repeat") { abRepeat() },
             cell("eq", G.EQ, "Equalizer") { eqDialog() },
-            cell("timer", G.ALARM, "Timer") { timerDialog() }
+            cell("timer", G.ALARM, "Timer") { timerDialog() },
+            cell("rot", G.ROTATE, "Rotate") { manualRotate() }
         )), lp(MATCH, WRAP))
         col.addView(divider(), lp(MATCH, dp(1)))
 
@@ -1432,7 +1416,7 @@ class PlayerActivity : ComponentActivity() {
             showShot = !showShot
             shotDot.visibility = if (showShot) View.VISIBLE else View.INVISIBLE
             shotBtn.visibility = if (showShot) View.VISIBLE else View.GONE
-            toast(if (showShot) "Screenshot button added to the player" else "Screenshot button hidden")
+            toast(if (showShot) "Screenshot button shown on the player" else "Screenshot button hidden")
         }
         sr.setPadding(0, dp(6), 0, dp(18))
         col.addView(sr, lp(MATCH, WRAP))
